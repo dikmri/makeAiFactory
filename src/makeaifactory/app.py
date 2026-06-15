@@ -240,7 +240,8 @@ def run_app() -> int:
                 percent=100,
             ))
             apply_update_and_restart(zip_path)
-            signals.app_quit.emit()
+            # frozen モードでは apply_update_and_restart が os._exit(0) を呼ぶため
+            # ここには到達しない。dev モードのみ到達するが更新は適用されない。
 
         except asyncio.TimeoutError:
             logger.debug("アップデート確認タイムアウト (5秒)")

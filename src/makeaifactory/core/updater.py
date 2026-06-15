@@ -18,13 +18,14 @@ from ..constants import APP_VERSION, GITHUB_REPO
 logger = logging.getLogger(__name__)
 
 # ── Launch flags ────────────────────────────────────────────────────────────
-# DETACHED_PROCESS (0x08) は console アプリ (cmd.exe) に対して「新しいコンソールを
-# 割り当てろ」という意味になり、CREATE_NO_WINDOW と競合して黒窓が表示される。
-# そのため DETACHED_PROCESS は使わず、代わりに以下を使う:
-#   CREATE_NO_WINDOW      : ウィンドウを作らない
-#   CREATE_NEW_PROCESS_GROUP : 親の Ctrl+C 等を継承しない
-#   CREATE_BREAKAWAY_FROM_JOB: 親の Job Object から離脱 (死活連動を防ぐ)
-# さらに STARTUPINFO.wShowWindow = SW_HIDE で二重に非表示化する。
+# DETACHED_PROCESS は使わない:
+#   console アプリ (cmd.exe) に対して「新コンソールを割り当てろ」の意味になり
+#   CREATE_NO_WINDOW と競合して黒窓が出る。
+# 代わりに以下の組み合わせで確実に非表示にする:
+#   CREATE_NO_WINDOW          : ウィンドウを作らない
+#   CREATE_NEW_PROCESS_GROUP  : 親の Ctrl+C 等を継承しない
+#   CREATE_BREAKAWAY_FROM_JOB : 親の Job Object から離脱 (死活連動を防ぐ)
+# + STARTUPINFO.wShowWindow = SW_HIDE で二重に非表示化
 _CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 _CREATE_NEW_PROCESS_GROUP  = 0x00000200
 
@@ -90,15 +91,18 @@ async def download_update(
 
 
 def apply_update_and_restart(zip_path: Path) -> None:
-    """ZIP を展開して BAT スクリプトにファイル差し替え+再起動を委譲する。
+    """ZIP を展開し BAT にファイル差し替え + 再起動を委譲する。
 
-    ウィンドウを完全に非表示にするために:
-      - DETACHED_PROCESS は使わない (新コンソール割り当てが起きて窓が出る)
-      - CREATE_NO_WINDOW + STARTUPINFO.wShowWindow=SW_HIDE で二重に非表示化
-      - CREATE_BREAKAWAY_FROM_JOB で親 Job Object から独立
+    frozen モードでは BAT 起動後に os._exit(0) でプロセスを即座に終了する。
+    これにより EXE ファイルのロックが即座に解除され、
+    BAT が makeAiFactory.exe を確実に上書きコピーできるようになる。
 
-    アプリ起動には start "" ではなく PowerShell Start-Process を使う
-    (より確実にプロセスを起動できる)。
+    【なぜ os._exit(0) が必要か】
+    signals.app_quit.emit() → app.quit() → app.exec() 返却 という流れで
+    Qt イベントループは終了するが、QRunnable ワーカースレッドはコルーチンを
+    実行し続けるため Python プロセスが 60 秒以上終了しない。
+    その間 EXE ファイルがロックされ、BAT の robocopy が失敗する。
+    os._exit(0) は全スレッドを即座に停止するため、1〜2 秒でプロセスが消える。
     """
     if not getattr(sys, "frozen", False):
         logger.warning("Not frozen — skipping update apply")
@@ -117,6 +121,7 @@ def apply_update_and_restart(zip_path: Path) -> None:
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(extract_dir)
 
+    # ZIP のトップレベルにサブディレクトリが 1 つだけある場合はそれを使う
     entries = list(extract_dir.iterdir())
     actual_src = entries[0] if (len(entries) == 1 and entries[0].is_dir()) else extract_dir
     logger.info("Update source: %s", actual_src)
@@ -125,8 +130,7 @@ def apply_update_and_restart(zip_path: Path) -> None:
     log_path = exe_dir / "_update_debug.log"
     bat_path = exe_dir / "_update.bat"
 
-    # PowerShell の Start-Process で EXE を起動する行
-    # BAT 内で %EXE% が展開されてから PS に渡るので、PS は ASCII パスを受け取る
+    # EXE 起動: PowerShell Start-Process が最も確実
     ps_launch = (
         "powershell -NoProfile -NonInteractive -WindowStyle Hidden "
         '-Command "Start-Process -FilePath \'%EXE%\'"'
@@ -140,54 +144,66 @@ def apply_update_and_restart(zip_path: Path) -> None:
         f'set "EXE={exe}"',
         f'set "PID_VAL={pid}"',
         "",
-        # 起動直後にログ書き込み (これが出れば BAT が実行された証拠)
-        'echo %TIME% updater bat started > "%LOG%"',
+        # BAT 起動確認ログ (この行が出れば BAT は実行されている)
+        'echo %DATE% %TIME% updater started > "%LOG%"',
         'echo SRC=%SRC% >> "%LOG%"',
         'echo DST=%DST% >> "%LOG%"',
         'echo EXE=%EXE% >> "%LOG%"',
         'echo PID=%PID_VAL% >> "%LOG%"',
         "",
-        "REM Wait for original process to exit (max 60 sec)",
+        # プロセス終了待ち (os._exit で即終了するので通常 1-2 秒で抜ける)
+        "REM Wait for the old process to exit (os._exit makes this fast)",
         "set COUNT=0",
         ":wait_loop",
         'tasklist /FI "PID eq %PID_VAL%" /NH 2>nul | find /I ".exe" >nul',
-        "if errorlevel 1 goto process_gone",
+        "if errorlevel 1 goto do_copy",
         "set /A COUNT+=1",
-        "if %COUNT% GEQ 60 goto process_gone",
+        "if %COUNT% GEQ 10 goto do_copy",
         "timeout /t 1 /nobreak >nul",
         "goto wait_loop",
         "",
-        ":process_gone",
-        'echo %TIME% process gone after %COUNT%s >> "%LOG%"',
-        "timeout /t 2 /nobreak >nul",
+        ":do_copy",
+        'echo %TIME% process check done (count=%COUNT%) >> "%LOG%"',
         "",
-        "REM Verify staging directory",
+        # ファイルハンドル解放を確実にするため 1 秒追加待機
+        "timeout /t 1 /nobreak >nul",
+        "",
+        # ステージングディレクトリ存在確認
         'if not exist "%SRC%" (',
         '    echo ERROR: staging dir not found: %SRC% >> "%LOG%"',
         "    exit /b 1",
         ")",
-        'echo %TIME% staging ok, starting robocopy >> "%LOG%"',
         "",
-        "REM Copy updated files",
-        'robocopy "%SRC%" "%DST%" /E /IS /IT /IM /NFL /NDL /NJH >> "%LOG%" 2>&1',
-        "set RCEXIT=%ERRORLEVEL%",
-        'echo %TIME% robocopy exit=%RCEXIT% >> "%LOG%"',
+        # robocopy でファイルコピー
+        # /E  : サブディレクトリも含む (空ディレクトリも含む)
+        # /IS : 同じファイルも上書き
+        # /IT : タイムスタンプが異なるファイルも上書き
+        # /IM : 更新されたファイルを上書き
+        # /R:3: 失敗時 3 回リトライ
+        # /W:2: リトライ間隔 2 秒 (デフォルト 30 秒を短縮)
+        'echo %TIME% starting robocopy >> "%LOG%"',
+        'robocopy "%SRC%" "%DST%" /E /IS /IT /IM /NFL /NDL /NJH /R:3 /W:2 >> "%LOG%" 2>&1',
+        "set RC=%ERRORLEVEL%",
+        'echo %TIME% robocopy exit=%RC% >> "%LOG%"',
         "",
-        "if %RCEXIT% GEQ 8 (",
-        '    echo ERROR: robocopy failed with exit=%RCEXIT% >> "%LOG%"',
+        # robocopy exit code >= 8 はエラー (0-7 は成功/情報)
+        "if %RC% GEQ 8 (",
+        '    echo ERROR: robocopy failed (exit=%RC%) >> "%LOG%"',
         "    exit /b 1",
         ")",
         "",
-        "REM Launch updated app via PowerShell Start-Process",
+        # 新バージョンの EXE 起動
         'if exist "%EXE%" (',
-        f'    echo %TIME% launching %EXE% >> "%LOG%"',
+        '    echo %TIME% launching %EXE% >> "%LOG%"',
         f"    {ps_launch}",
         '    echo %TIME% launch command sent >> "%LOG%"',
         ") else (",
         '    echo ERROR: exe not found after copy: %EXE% >> "%LOG%"',
+        "    exit /b 1",
         ")",
         "",
-        "timeout /t 5 /nobreak >nul",
+        # クリーンアップ
+        "timeout /t 3 /nobreak >nul",
         'rd /s /q "%SRC%" 2>nul',
         'echo %TIME% cleanup done >> "%LOG%"',
         'del "%~f0" 2>nul',
@@ -198,12 +214,10 @@ def apply_update_and_restart(zip_path: Path) -> None:
     logger.info("BAT written: %s", bat_path)
 
     # ── 3. BAT を完全非表示で起動 ────────────────────────────────────────
-    # STARTUPINFO.wShowWindow = SW_HIDE (0) で窓を強制非表示
     si = subprocess.STARTUPINFO()
     si.dwFlags = subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = 0  # SW_HIDE
 
-    # DETACHED_PROCESS は使わない (コンソール再割り当てで黒窓が出る)
     flags_primary  = subprocess.CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP | _CREATE_BREAKAWAY_FROM_JOB
     flags_fallback = subprocess.CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
 
@@ -225,3 +239,17 @@ def apply_update_and_restart(zip_path: Path) -> None:
         "Update BAT launched (app_pid=%d bat_pid=%d): %s -> %s",
         pid, proc.pid, actual_src, exe_dir,
     )
+
+    # ── 4. プロセスを即座に終了して EXE ロックを解除 ────────────────────
+    # os._exit(0) は全スレッドを即座に停止する (Python の通常終了処理をスキップ)。
+    # これにより:
+    #   - makeAiFactory.exe のファイルロックが即座に解除される
+    #   - BAT が 1-2 秒後に "process gone" を検出して robocopy を開始できる
+    #   - robocopy が EXE を確実にコピーできる (Error 32 が発生しない)
+    #
+    # signals.app_quit.emit() は使わない:
+    #   app.quit() → app.exec() 返却後も QRunnable ワーカースレッドが
+    #   _run_setup() を続行するため、プロセスが 60 秒以上終了しない。
+    logger.info("Calling os._exit(0) to release EXE lock for updater BAT")
+    logging.shutdown()  # ログをフラッシュしてからプロセス終了
+    os._exit(0)
