@@ -140,8 +140,10 @@ def probe_system(runtime_root: Path) -> SystemInfo:
     info.disk_free_gb = _disk_free_gb(runtime_root.parent)
 
     logger.info(
-        "システム情報: OS=%s GPU=%s VRAM=%.1fGB Disk=%.1fGB",
+        "システム情報: OS=%s | CPU=%s | RAM=%.1fGB | GPU=%s | VRAM=%.1fGB | Disk空き=%.1fGB",
         info.os_version,
+        info.cpu or "不明",
+        info.ram_gb,
         info.primary_gpu.name if info.primary_gpu else "なし",
         info.primary_gpu.vram_gb if info.primary_gpu else 0,
         info.disk_free_gb,

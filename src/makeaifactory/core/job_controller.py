@@ -150,8 +150,77 @@ class JobController:
             "Job完了: %s → %s (%.0fs, VRAMピーク=%.1fGB, モード=%s)",
             job.job_id, final_output, elapsed, vram.peak_gb, self._settings.vram_mode,
         )
+        self._log_benchmark(bench, input_image.name)
         _notify(on_progress, JobProgress(state=JobState.COMPLETED, message="完成！"))
         return final_output, bench
+
+    def _log_benchmark(self, bench: BenchmarkResult, image_name: str) -> None:
+        """生成結果をログと benchmark.csv に記録する。"""
+        import csv
+        from datetime import datetime
+        from ..constants import VRAM_MODE_LABELS
+
+        now = datetime.now()
+        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+        mode_label = VRAM_MODE_LABELS.get(bench.vram_mode, bench.vram_mode)
+        mins = int(bench.elapsed_sec // 60)
+        secs_rem = int(bench.elapsed_sec % 60)
+        time_str = f"{mins}分{secs_rem}秒 ({bench.elapsed_sec:.1f}秒)"
+        vram_pct = (bench.vram_peak_gb / bench.vram_total_gb * 100) if bench.vram_total_gb > 0 else 0.0
+
+        # ── 人間向けログ (メインログファイルに記録) ─────────────────────
+        sep = "=" * 52
+        lines = [
+            sep,
+            "  [BENCHMARK] 生成ベンチマーク結果",
+            f"  日時     : {timestamp}",
+            f"  GPU      : {bench.gpu_name} ({bench.vram_total_gb:.1f} GB VRAM)",
+            f"  VRAMモード: {mode_label} ({bench.vram_mode})",
+            f"  入力画像  : {image_name}",
+            f"  生成時間  : {time_str}",
+        ]
+        if bench.vram_available:
+            lines.append(
+                f"  VRAM使用量: ピーク {bench.vram_peak_gb:.1f} GB / "
+                f"平均 {bench.vram_avg_gb:.1f} GB / "
+                f"搭載 {bench.vram_total_gb:.1f} GB "
+                f"(ピーク使用率 {vram_pct:.1f}%)"
+            )
+        else:
+            lines.append("  VRAM使用量: 計測不可 (nvidia-smi が見つかりません)")
+        lines.append(sep)
+        for line in lines:
+            logger.info(line)
+
+        # ── CSV (benchmark.csv) に追記 ────────────────────────────────
+        csv_path = self._paths.logs_dir / "benchmark.csv"
+        write_header = not csv_path.exists()
+        try:
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            with csv_path.open("a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if write_header:
+                    w.writerow([
+                        "timestamp", "gpu_name", "vram_total_gb",
+                        "vram_mode", "image_name",
+                        "elapsed_sec", "elapsed_min",
+                        "vram_peak_gb", "vram_avg_gb", "vram_peak_pct",
+                    ])
+                w.writerow([
+                    timestamp,
+                    bench.gpu_name,
+                    f"{bench.vram_total_gb:.1f}",
+                    bench.vram_mode,
+                    image_name,
+                    f"{bench.elapsed_sec:.1f}",
+                    f"{bench.elapsed_sec / 60:.2f}",
+                    f"{bench.vram_peak_gb:.1f}" if bench.vram_available else "",
+                    f"{bench.vram_avg_gb:.1f}" if bench.vram_available else "",
+                    f"{vram_pct:.1f}" if bench.vram_available else "",
+                ])
+            logger.info("ベンチマークCSV更新: %s", csv_path)
+        except Exception as exc:
+            logger.warning("ベンチマークCSV書き込み失敗: %s", exc)
 
     async def cancel_current(self) -> None:
         if self._client:
