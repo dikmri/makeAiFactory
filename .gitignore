@@ -10,8 +10,8 @@ build/
 dist/
 *.spec.bak
 
-# Runtime (ユーザーデータ・モデル等 - 数十GB)
-runtime/
+# Runtime (ユーザーデータ・モデル等 - 数十GB) — ルート直下のみ除外
+/runtime/
 
 # ログ・一時ファイル
 *.log
