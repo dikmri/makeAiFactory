@@ -62,7 +62,7 @@ class BenchmarkResult:
     vram_avg_gb: float = 0.0
     vram_total_gb: float = 0.0   # GPU 搭載 VRAM 合計
     gpu_name: str = ""
-    vram_mode: str = "normal"    # "normal" | "low" | "novram"
+    vram_mode: str = "normal"    # "normal" | "novram"
     # システム RAM (novram モードで重要)
     ram_peak_gb: float = 0.0     # 生成中の RAM 使用量ピーク
     ram_avg_gb: float = 0.0

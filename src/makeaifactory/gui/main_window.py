@@ -147,8 +147,7 @@ class MainWindow(QMainWindow):
         self._vram_actions: dict[str, QAction] = {}
         for mode, label in [
             ("normal", "通常モード (推奨: 16GB+)"),
-            ("low",    "低VRAMモード --lowvram (8-15GB)"),
-            ("novram", "超省VRAMモード --novram (～8GB / 低速)"),
+            ("novram", "超省VRAMモード --novram (～16GB未満 / 低速・RAM大量消費)"),
         ]:
             act = QAction(label, self)
             act.setCheckable(True)

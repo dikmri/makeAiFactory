@@ -66,4 +66,4 @@ class SettingsStore:
     @property
     def vram_mode(self) -> str:
         v = str(self.get("vram_mode"))
-        return v if v in ("normal", "low", "novram") else "normal"
+        return v if v in ("normal", "novram") else "normal"

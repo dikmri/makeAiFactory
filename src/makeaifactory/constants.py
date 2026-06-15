@@ -1,5 +1,5 @@
 APP_NAME = "makeAiFactory"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 GITHUB_REPO = "dikmri/makeAiFactory"
 RUNTIME_VERSION = "2026.06.14.1"
 WORKFLOW_TEMPLATE_VERSION = "1"
@@ -18,12 +18,10 @@ DISK_BUFFER_GB = 20
 # ComfyUI 起動フラグ (VRAMモード別)
 VRAM_MODE_FLAGS: dict[str, list[str]] = {
     "normal": [],
-    "low": ["--lowvram"],
     "novram": ["--novram"],
 }
 VRAM_MODE_LABELS: dict[str, str] = {
     "normal": "通常モード",
-    "low": "低VRAMモード",
     "novram": "超省VRAMモード",
 }
 
