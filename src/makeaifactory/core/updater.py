@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import os
 import subprocess
@@ -20,14 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 class ReleaseInfo(NamedTuple):
-    version: str       # "0.2.0"
-    tag: str           # "v0.2.0"
+    version: str       # "0.3.0"
+    tag: str           # "v0.3.0"
     download_url: str
     release_url: str
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in v.lstrip("v").split("."))
+
+
+def _ps_quote(path: Path) -> str:
+    """PowerShell シングルクォート文字列用にパスをエスケープする ('→'')。"""
+    return str(path).replace("'", "''")
 
 
 async def check_for_update() -> ReleaseInfo | None:
@@ -83,10 +87,11 @@ async def download_update(
 
 
 def apply_update_and_restart(zip_path: Path) -> None:
-    """zip を展開し、PowerShell で現在のファイルを置き換えてから再起動する。
+    """zip を展開し、PowerShell スクリプトでファイルを置き換えてから再起動する。
 
-    Windows では実行中の EXE を直接上書きできないため、
-    デタッチされた PowerShell スクリプトに処理を委ねてからアプリを終了する。
+    Windows では実行中の EXE を直接上書きできないため、デタッチされた
+    PowerShell スクリプト (_update.ps1) にファイル置き換えと再起動を委ねる。
+    スクリプトは exe_dir (ASCII 保証) に書き出し、-File で起動する。
     """
     if not getattr(sys, "frozen", False):
         logger.warning("開発環境ではアップデートを適用できません")
@@ -94,38 +99,64 @@ def apply_update_and_restart(zip_path: Path) -> None:
 
     exe = Path(sys.executable)
     exe_dir = exe.parent
+    pid = os.getpid()
 
-    # zip を一時ディレクトリに展開
-    extract_dir = Path(tempfile.mkdtemp(prefix="maf_upd_"))
+    # 展開先: exe_dir 直下に置く（インストール時に ASCII 検証済みのため安全）
+    import shutil as _shutil
+    extract_dir = exe_dir / "_upd_staging"
+    if extract_dir.exists():
+        _shutil.rmtree(extract_dir, ignore_errors=True)
+
     logger.info("zip を展開: %s → %s", zip_path, extract_dir)
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(extract_dir)
 
-    pid = os.getpid()
+    # PowerShell スクリプトを exe_dir に書き出す
+    # シングルクォートで囲み、バックスラッシュや日本語の問題を回避する
+    ps_path = exe_dir / "_update.ps1"
+    ps_content = "\n".join([
+        f"$pid_val    = {pid}",
+        f"$src        = '{_ps_quote(extract_dir)}'",
+        f"$dst        = '{_ps_quote(exe_dir)}'",
+        f"$exe_path   = '{_ps_quote(exe)}'",
+        f"$zip_path   = '{_ps_quote(zip_path)}'",
+        "$myself     = $MyInvocation.MyCommand.Path",
+        "",
+        "# 元プロセスが終了するまで待つ",
+        "while (Get-Process -Id $pid_val -ErrorAction SilentlyContinue) {",
+        "    Start-Sleep -Milliseconds 500",
+        "}",
+        "Start-Sleep -Seconds 2",
+        "",
+        "# ファイルを上書きコピー",
+        "robocopy $src $dst /E /IS /IT /IM /NFL /NDL /NJH | Out-Null",
+        "",
+        "# 再起動",
+        "Start-Process -FilePath $exe_path",
+        "",
+        "# 後片付け (少し待ってから削除)",
+        "Start-Sleep -Seconds 5",
+        "Remove-Item -Recurse -Force $src      -ErrorAction SilentlyContinue",
+        "Remove-Item -Force          $zip_path -ErrorAction SilentlyContinue",
+        "Remove-Item -Force          $myself   -ErrorAction SilentlyContinue",
+    ]) + "\n"
 
-    # PowerShell スクリプト: 元プロセス終了待ち → robocopy → 再起動 → 後片付け
-    # extract_dir 内のパスが Unicode でも -EncodedCommand (UTF-16 LE) で正しく渡せる
-    ps_script = f"""
-$ErrorActionPreference = 'SilentlyContinue'
-$pid_val = {pid}
-while (Get-Process -Id $pid_val -ErrorAction SilentlyContinue) {{
-    Start-Sleep -Milliseconds 300
-}}
-Start-Sleep -Seconds 1
-robocopy "{extract_dir}" "{exe_dir}" /E /IS /IT /IM /NFL /NDL /NJH | Out-Null
-Start-Process "{exe}"
-Remove-Item -Recurse -Force "{extract_dir}" -ErrorAction SilentlyContinue
-Remove-Item -Force "{zip_path}" -ErrorAction SilentlyContinue
-"""
-    encoded = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
+    ps_path.write_text(ps_content, encoding="utf-8")
 
-    subprocess.Popen(
+    # PowerShell 5.1 絶対パス（Windows 10/11 に常駐）
+    ps_exe = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+    proc = subprocess.Popen(
         [
-            "powershell", "-NoProfile", "-NonInteractive",
+            ps_exe,
+            "-NoProfile", "-NonInteractive",
             "-WindowStyle", "Hidden",
-            "-EncodedCommand", encoded,
+            "-ExecutionPolicy", "Bypass",
+            "-File", str(ps_path),
         ],
         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
-        close_fds=True,
     )
-    logger.info("アップデートスクリプトを起動しました (PID=%d 終了後に適用)。", pid)
+    logger.info(
+        "アップデートスクリプト起動 (PID=%d, updater_PID=%d): %s → %s",
+        pid, proc.pid, extract_dir, exe_dir,
+    )
