@@ -29,6 +29,7 @@ class _AsyncSignals(QObject):
     job_progress = Signal(JobProgress)
     job_done = Signal(Path)
     error = Signal(str, str, str, bool)
+    app_quit = Signal()
 
 
 class _Worker(QRunnable):
@@ -127,8 +128,51 @@ def run_app() -> int:
     signals.job_progress.connect(_on_job_progress, Qt.ConnectionType.QueuedConnection)
     signals.job_done.connect(_on_job_done, Qt.ConnectionType.QueuedConnection)
     signals.error.connect(_on_error, Qt.ConnectionType.QueuedConnection)
+    signals.app_quit.connect(app.quit, Qt.ConnectionType.QueuedConnection)
+
+    async def _check_and_apply_update() -> None:
+        """GitHub 最新リリースを確認し、新しいバージョンがあれば自動ダウンロード・適用・再起動する。"""
+        if not getattr(sys, "frozen", False):
+            return
+        try:
+            from .core.updater import apply_update_and_restart, check_for_update, download_update
+
+            release = await asyncio.wait_for(check_for_update(), timeout=5.0)
+            if release is None:
+                return
+
+            def _upd_pct(pct: float) -> None:
+                signals.setup_progress.emit(SetupProgress(
+                    state=SetupState.DOWNLOADING_MODELS,
+                    message=f"v{release.version} をダウンロード中... {pct * 100:.0f}%",
+                    percent=pct * 100,
+                ))
+
+            signals.setup_progress.emit(SetupProgress(
+                state=SetupState.DOWNLOADING_MODELS,
+                message=f"新しいバージョン v{release.version} があります。ダウンロード中...",
+                percent=0,
+            ))
+
+            zip_path = await download_update(release, progress_cb=_upd_pct)
+
+            signals.setup_progress.emit(SetupProgress(
+                state=SetupState.DOWNLOADING_MODELS,
+                message="アップデートを適用して再起動します...",
+                percent=100,
+            ))
+
+            apply_update_and_restart(zip_path)
+            signals.app_quit.emit()
+
+        except asyncio.TimeoutError:
+            logger.debug("アップデート確認タイムアウト (5秒)")
+        except Exception as e:
+            logger.debug("アップデート確認スキップ: %s", e)
 
     async def _run_setup():
+        await _check_and_apply_update()
+
         def _cb(p: SetupProgress):
             signals.setup_progress.emit(p)
         try:
