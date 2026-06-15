@@ -22,6 +22,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Inject version from tag into source
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          Write-Output "Building version: $version"
+          (Get-Content src\makeaifactory\constants.py) `
+            -replace 'APP_VERSION = "[^"]*"', "APP_VERSION = `"$version`"" |
+            Set-Content src\makeaifactory\constants.py
+          (Get-Content pyproject.toml) `
+            -replace 'version = "[^"]*"', "version = `"$version`"" |
+            Set-Content pyproject.toml
+
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
