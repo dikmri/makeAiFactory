@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
         self._drop_area.image_dropped.connect(self.image_dropped)
         dp_layout.addWidget(self._drop_area, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self._batch_btn = QPushButton("フォルダを一括生成...")
+        self._batch_btn = QPushButton("フォルダ内画像生成")
         self._batch_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
