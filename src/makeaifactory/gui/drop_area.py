@@ -44,7 +44,8 @@ class DropArea(QLabel):
 
     def _set_idle_state(self) -> None:
         self.setText(
-            "画像をここにドロップ\n\n"
+            "画像をここにドロップ\n"
+            "または Ctrl+V で貼り付け\n\n"
             "PNG / JPG / JPEG / WEBP\n\n"
             "初回のみセットアップが実行されます"
         )

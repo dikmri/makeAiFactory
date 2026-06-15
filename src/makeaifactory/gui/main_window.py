@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -177,6 +179,10 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
+        # Ctrl+V でクリップボードの画像をペースト
+        paste_sc = QShortcut(QKeySequence.StandardKey.Paste, self)
+        paste_sc.activated.connect(self._try_paste_image)
+
         self._logs_dir: Path | None = None
         self._output_dir: Path | None = None
         self._system_info_text: str = ""
@@ -207,6 +213,21 @@ class MainWindow(QMainWindow):
     def _on_vram_mode_selected(self, mode: str) -> None:
         if self._vram_mode_callback:
             self._vram_mode_callback(mode)
+
+    @Slot()
+    def _try_paste_image(self) -> None:
+        """クリップボードの画像をtempファイルに保存してD&Dと同じフローで処理する。"""
+        if self._stack.currentIndex() != _PAGE_DROP:
+            return
+        img: QImage = QApplication.clipboard().image()
+        if img.isNull():
+            return
+        tmp = Path(tempfile.mktemp(suffix=".png", prefix="maf_clip_"))
+        if not img.save(str(tmp), "PNG"):
+            logger.warning("クリップボード画像の保存に失敗しました")
+            return
+        logger.info("クリップボードから画像を貼り付け: %s (%dx%d)", tmp, img.width(), img.height())
+        self.image_dropped.emit(tmp)
 
     @Slot()
     def show_drop_page(self) -> None:
