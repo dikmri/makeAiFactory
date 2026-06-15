@@ -18,9 +18,18 @@ from ..constants import APP_VERSION, GITHUB_REPO
 
 logger = logging.getLogger(__name__)
 
-# CREATE_BREAKAWAY_FROM_JOB: child process escapes parent Job Object.
-# Prevents the OS from killing the updater script when the app exits.
-_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+# We intentionally use a .bat file instead of a .ps1 file for the update
+# script.  On Japanese Windows, PowerShell 5.1 reads .ps1 files as CP932
+# unless a UTF-8 BOM is present, which can silently corrupt the script.
+# Additionally, security software (SmartScreen / Defender) may block
+# unsigned .ps1 files without showing any error.
+#
+# A plain .bat file avoids both problems:
+#   - cmd.exe always reads batch files as the OEM codepage, but our batch
+#     content is pure ASCII so there is no encoding mismatch.
+#   - Batch files are never subject to PowerShell execution policy.
+#   - "start "" "app.exe"" creates a truly independent process that
+#     survives the parent cmd.exe exiting.
 
 
 class ReleaseInfo(NamedTuple):
@@ -32,11 +41,6 @@ class ReleaseInfo(NamedTuple):
 
 def _parse_version(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in v.lstrip("v").split("."))
-
-
-def _ps_quote(path: Path) -> str:
-    """Escape a path for use inside a PowerShell single-quoted string."""
-    return str(path).replace("'", "''")
 
 
 async def check_for_update() -> ReleaseInfo | None:
@@ -73,7 +77,7 @@ async def download_update(
     progress_cb: Callable[[float], None] | None = None,
 ) -> Path:
     tmp_path = Path(tempfile.mktemp(suffix=".zip", prefix="maf_update_"))
-    logger.info("Downloading update zip: %s -> %s", release.download_url, tmp_path)
+    logger.info("Downloading update: %s -> %s", release.download_url, tmp_path)
     async with httpx.AsyncClient(timeout=600, follow_redirects=True) as client:
         async with client.stream("GET", release.download_url) as resp:
             resp.raise_for_status()
@@ -89,133 +93,109 @@ async def download_update(
 
 
 def apply_update_and_restart(zip_path: Path) -> None:
-    """Extract zip and hand off file replacement + restart to a PowerShell script.
+    """Extract zip and hand off file replacement + restart to a .bat script.
 
-    The PS1 is written with UTF-8 BOM (utf-8-sig) so that PowerShell 5.1 on
-    Japanese Windows reads it correctly instead of misinterpreting it as CP932.
-    All PS1 content is ASCII-only to eliminate any encoding ambiguity.
+    All paths used inside the bat file are guaranteed ASCII (exe_dir is
+    validated at install time, _upd_staging is a child of exe_dir).
+    The bat file itself is written as pure ASCII bytes, so cmd.exe reads
+    it correctly regardless of the system codepage.
     """
     if not getattr(sys, "frozen", False):
         logger.warning("Not frozen - skipping update apply")
         return
 
-    exe = Path(sys.executable)
+    exe     = Path(sys.executable)
     exe_dir = exe.parent
-    pid = os.getpid()
+    pid     = os.getpid()
 
-    # Extract to exe_dir (guaranteed ASCII path, same drive = fast copy).
+    # ── 1. Extract zip to a staging directory inside exe_dir ────────────
     extract_dir = exe_dir / "_upd_staging"
     if extract_dir.exists():
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-    logger.info("Extracting zip: %s -> %s", zip_path, extract_dir)
+    logger.info("Extracting zip %s -> %s", zip_path, extract_dir)
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(extract_dir)
+    logger.info("Extraction complete")
 
-    # If the zip contained a single top-level subdirectory, unwrap it.
+    # If the zip had a single top-level subdirectory, unwrap it so that
+    # robocopy copies the actual files, not the subdirectory itself.
     entries = list(extract_dir.iterdir())
     if len(entries) == 1 and entries[0].is_dir():
         actual_src = entries[0]
-        logger.info("Unwrapping subdirectory in zip: %s", actual_src.name)
+        logger.info("Unwrapping zip subdirectory: %s", actual_src.name)
     else:
         actual_src = extract_dir
 
-    log_path  = exe_dir / "_update_debug.log"
-    ps_path   = exe_dir / "_update.ps1"
+    # ── 2. Write the updater batch file ─────────────────────────────────
+    log_path = exe_dir / "_update_debug.log"
+    bat_path = exe_dir / "_update.bat"
 
-    # --- PS1 script: ASCII-ONLY content, written with UTF-8 BOM ---
-    # PowerShell 5.1 reads .ps1 files as the system codepage (CP932 on Japanese
-    # Windows) unless a BOM is present.  utf-8-sig adds the BOM so PS reads
-    # the file as UTF-8.  We also keep every character ASCII to be safe.
-    ps_lines = [
-        f"$pid_val  = {pid}",
-        f"$src      = '{_ps_quote(actual_src)}'",
-        f"$dst      = '{_ps_quote(exe_dir)}'",
-        f"$exe_path = '{_ps_quote(exe)}'",
-        f"$zip_path = '{_ps_quote(zip_path)}'",
-        f"$log_path = '{_ps_quote(log_path)}'",
-        "$myself   = $MyInvocation.MyCommand.Path",
+    # All values substituted here are ASCII (exe_dir guaranteed, pid is int).
+    bat_lines = [
+        "@echo off",
+        f'set "LOG={log_path}"',
+        f'set "SRC={actual_src}"',
+        f'set "DST={exe_dir}"',
+        f'set "EXE={exe}"',
         "",
-        "function Log($msg) {",
-        "    $line = \"$(Get-Date -Format 'HH:mm:ss') $msg\"",
-        "    Write-Output $line | Out-File -Append -Encoding utf8 $log_path",
-        "}",
+        'echo %TIME% bat started > "%LOG%"',
         "",
-        "Log 'updater started'",
-        "Log \"src=$src dst=$dst pid=$pid_val\"",
+        "REM Wait for original process to exit (max 60 sec).",
+        "set COUNT=0",
+        ":wait_loop",
+        f'tasklist /FI "PID eq {pid}" /NH 2>nul | find /I ".exe" >nul',
+        "if errorlevel 1 goto process_gone",
+        "set /A COUNT+=1",
+        "if %COUNT% GEQ 60 goto process_gone",
+        "timeout /t 1 /nobreak >nul",
+        "goto wait_loop",
         "",
-        "# Wait for the original process to exit (max 60 s).",
-        "$waited = 0",
-        "while ((Get-Process -Id $pid_val -ErrorAction SilentlyContinue) -and ($waited -lt 60000)) {",
-        "    Start-Sleep -Milliseconds 500",
-        "    $waited += 500",
-        "}",
-        "Log \"process gone after ${waited}ms\"",
-        "Start-Sleep -Seconds 2",
+        ":process_gone",
+        'echo %TIME% process gone after %COUNT%s >> "%LOG%"',
+        "timeout /t 2 /nobreak >nul",
         "",
-        "# Verify source exists.",
-        "if (-not (Test-Path $src)) {",
-        "    Log \"ERROR: src not found: $src\"",
-        "    exit 1",
-        "}",
-        "Log 'source exists - starting robocopy'",
+        "REM Verify the staging directory exists.",
+        'if not exist "%SRC%" (',
+        '    echo ERROR: staging dir not found: %SRC% >> "%LOG%"',
+        "    exit /b 1",
+        ")",
+        'echo %TIME% staging dir ok >> "%LOG%"',
         "",
-        "# Copy files (robocopy exit 0-7 = success/partial).",
-        "robocopy $src $dst /E /IS /IT /IM /NFL /NDL /NJH",
-        "$rc = $LASTEXITCODE",
-        "Log \"robocopy exit=$rc\"",
-        "if ($rc -ge 8) {",
-        "    Log \"ERROR: robocopy failed with exit code $rc\"",
-        "    exit 1",
-        "}",
+        "REM Copy updated files over the installation.",
+        'echo %TIME% robocopy start >> "%LOG%"',
+        'robocopy "%SRC%" "%DST%" /E /IS /IT /IM /NFL /NDL /NJH >> "%LOG%" 2>&1',
+        'echo %TIME% robocopy done rc=%ERRORLEVEL% >> "%LOG%"',
         "",
-        "# Launch updated app.",
-        "if (Test-Path $exe_path) {",
-        "    Log 'launching app'",
-        "    Start-Process -FilePath $exe_path",
-        "    Log 'launched ok'",
-        "} else {",
-        "    Log \"ERROR: exe not found after copy: $exe_path\"",
-        "}",
+        "REM Launch the updated application.",
+        'if exist "%EXE%" (',
+        '    echo %TIME% launching %EXE% >> "%LOG%"',
+        '    start "" "%EXE%"',
+        '    echo %TIME% launched ok >> "%LOG%"',
+        ") else (",
+        '    echo ERROR: exe not found after copy: %EXE% >> "%LOG%"',
+        ")",
         "",
-        "# Cleanup.",
-        "Start-Sleep -Seconds 5",
-        "Remove-Item -Recurse -Force $src      -ErrorAction SilentlyContinue",
-        "Remove-Item -Force          $zip_path -ErrorAction SilentlyContinue",
-        "Log 'cleanup done'",
-        "Remove-Item -Force          $myself   -ErrorAction SilentlyContinue",
+        "REM Cleanup staging directory and this batch file.",
+        "timeout /t 5 /nobreak >nul",
+        'rd /s /q "%SRC%" 2>nul',
+        'del "%~f0" 2>nul',
     ]
-    ps_content = "\n".join(ps_lines) + "\n"
+    bat_content = "\r\n".join(bat_lines) + "\r\n"
 
-    # Write with BOM so PowerShell 5.1 detects UTF-8 correctly.
-    ps_path.write_text(ps_content, encoding="utf-8-sig")
-    logger.info("PS1 written: %s", ps_path)
+    # Write as raw ASCII bytes - cmd.exe reads batch files as the system
+    # OEM codepage, which is a superset of ASCII, so this is always safe.
+    bat_path.write_bytes(bat_content.encode("ascii"))
+    logger.info("BAT written: %s", bat_path)
 
-    ps_exe = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-
-    flags = (
-        subprocess.DETACHED_PROCESS
-        | subprocess.CREATE_NO_WINDOW
-        | _CREATE_BREAKAWAY_FROM_JOB
+    # ── 3. Launch the batch file via cmd.exe ────────────────────────────
+    # "cmd /c" exits when the batch finishes, but the "start" inside the
+    # batch creates an independent process, so the new app keeps running.
+    proc = subprocess.Popen(
+        ["cmd.exe", "/c", str(bat_path)],
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
     )
-    cmd = [
-        ps_exe,
-        "-NoProfile", "-NonInteractive",
-        "-WindowStyle", "Hidden",
-        "-ExecutionPolicy", "Bypass",
-        "-File", str(ps_path),
-    ]
-    try:
-        proc = subprocess.Popen(cmd, creationflags=flags)
-    except OSError:
-        # Job object may not allow breakaway - retry without the flag.
-        logger.warning("CREATE_BREAKAWAY_FROM_JOB denied; retrying without it")
-        proc = subprocess.Popen(
-            cmd,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
-        )
-
     logger.info(
-        "Updater script launched (app_pid=%d updater_pid=%d): %s -> %s",
+        "Update BAT launched (app_pid=%d bat_pid=%d): %s -> %s",
         pid, proc.pid, actual_src, exe_dir,
     )
