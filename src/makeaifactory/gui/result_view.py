@@ -27,7 +27,7 @@ class ResultView(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
 
         title = QLabel("動画が完成しました")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -41,8 +41,13 @@ class ResultView(QWidget):
 
         self._player = QMediaPlayer()
         self._player.setVideoOutput(self._video_widget)
-        # 無限ループ再生 (-1 = QMediaPlayer.Loops.Infinite)
         self._player.setLoops(-1)
+
+        self._time_label = QLabel("")
+        self._time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._time_label.setStyleSheet("color: #888; font-size: 13px;")
+        self._time_label.setVisible(False)
+        layout.addWidget(self._time_label)
 
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
@@ -65,6 +70,7 @@ class ResultView(QWidget):
         layout.addLayout(btn_layout)
 
         self._output_path: Path | None = None
+        self._source_stem: str = ""
 
     def _btn_style(self) -> str:
         return """
@@ -80,8 +86,17 @@ class ResultView(QWidget):
             QPushButton:pressed { background: #0d47a1; }
         """
 
-    def show_result(self, output_path: Path) -> None:
+    def show_result(self, output_path: Path, source_stem: str = "", elapsed_sec: float = 0.0) -> None:
         self._output_path = output_path
+        self._source_stem = source_stem
+        if elapsed_sec > 0:
+            mins = int(elapsed_sec // 60)
+            secs = int(elapsed_sec % 60)
+            time_str = f"生成時間: {mins}分{secs}秒" if mins > 0 else f"生成時間: {secs}秒"
+            self._time_label.setText(time_str)
+            self._time_label.setVisible(True)
+        else:
+            self._time_label.setVisible(False)
         try:
             self._player.setSource(QUrl.fromLocalFile(str(output_path)))
             self._player.play()
@@ -91,10 +106,11 @@ class ResultView(QWidget):
     def _save_as(self) -> None:
         if not self._output_path:
             return
+        stem = self._source_stem or self._output_path.stem
         dest, _ = QFileDialog.getSaveFileName(
             self,
             "動画を保存",
-            self._output_path.name,
+            f"{stem}.mp4",
             "動画ファイル (*.mp4);;すべてのファイル (*)",
         )
         if dest:

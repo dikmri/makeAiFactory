@@ -4,18 +4,20 @@ import logging
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
     QStatusBar,
+    QVBoxLayout,
     QWidget,
 )
 
 from ..constants import APP_NAME, APP_VERSION
-from ..domain.progress import JobProgress, JobState, SetupProgress, SetupState
+from ..domain.progress import JobProgress, SetupProgress, SetupState
 from .drop_area import DropArea
 from .error_dialog import ErrorDialog
 from .progress_view import ProgressView
@@ -30,11 +32,12 @@ _PAGE_RESULT = 2
 
 class MainWindow(QMainWindow):
     image_dropped = Signal(Path)
+    batch_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(540, 420)
+        self.setMinimumSize(540, 460)
         self._setup_style()
         self._build_ui()
         self._build_menu()
@@ -58,22 +61,64 @@ class MainWindow(QMainWindow):
             }
             QMenu::item:selected { background: #253858; }
             QStatusBar { background: #111; color: #999; font-size: 12px; }
+            QLineEdit {
+                background: #1a1a2e;
+                color: #eee;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton {
+                background: #1a1a2e;
+                color: #ccc;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover { background: #253858; }
+            QDialogButtonBox QPushButton {
+                padding: 6px 20px;
+            }
         """)
 
     def _build_ui(self) -> None:
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
+        # ── Drop page: DropArea + 一括生成ボタン ──────────────────────
+        drop_page = QWidget()
+        dp_layout = QVBoxLayout(drop_page)
+        dp_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dp_layout.setContentsMargins(24, 24, 24, 24)
+        dp_layout.setSpacing(14)
+
         self._drop_area = DropArea()
         self._drop_area.image_dropped.connect(self.image_dropped)
-        self._stack.addWidget(self._drop_area)
+        dp_layout.addWidget(self._drop_area, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self._batch_btn = QPushButton("フォルダを一括生成...")
+        self._batch_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #777;
+                border: 1px solid #444;
+                border-radius: 6px;
+                padding: 7px 28px;
+                font-size: 13px;
+            }
+            QPushButton:hover { background: #1a1a2e; color: #bbb; border-color: #4fc3f7; }
+        """)
+        self._batch_btn.clicked.connect(self.batch_requested)
+        dp_layout.addWidget(self._batch_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self._stack.addWidget(drop_page)  # _PAGE_DROP
 
         self._progress_view = ProgressView()
-        self._stack.addWidget(self._progress_view)
+        self._stack.addWidget(self._progress_view)  # _PAGE_PROGRESS
 
         self._result_view = ResultView()
         self._result_view.request_again.connect(self._on_request_again)
-        self._stack.addWidget(self._result_view)
+        self._stack.addWidget(self._result_view)  # _PAGE_RESULT
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -135,6 +180,8 @@ class MainWindow(QMainWindow):
     @Slot()
     def show_drop_page(self) -> None:
         self._result_view.stop_playback()
+        self._progress_view.stop_elapsed()
+        self._progress_view.hide_cancel()
         self._drop_area.set_ready()
         self._stack.setCurrentIndex(_PAGE_DROP)
         self._status_bar.clearMessage()
@@ -149,11 +196,16 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
         self._progress_view.set_indeterminate(message)
 
-    @Slot(Path)
-    def show_result(self, output_path: Path) -> None:
+    @Slot(Path, str, float)
+    def show_result(self, output_path: Path, source_stem: str = "", elapsed_sec: float = 0.0) -> None:
+        self._progress_view.stop_elapsed()
+        self._progress_view.hide_cancel()
         self._stack.setCurrentIndex(_PAGE_RESULT)
-        self._result_view.show_result(output_path)
-        self._status_bar.showMessage(f"完成: {output_path.name}")
+        self._result_view.show_result(output_path, source_stem, elapsed_sec)
+        mins = int(elapsed_sec // 60)
+        secs = int(elapsed_sec % 60)
+        elapsed_str = f" ({mins}分{secs}秒)" if mins > 0 else (f" ({secs}秒)" if secs > 0 else "")
+        self._status_bar.showMessage(f"完成: {output_path.name}{elapsed_str}")
 
     def show_error(self, title: str, message: str, detail: str = "", show_repair: bool = False) -> None:
         repair = ErrorDialog.show_error(title, message, detail, self, show_repair)
@@ -162,6 +214,18 @@ class MainWindow(QMainWindow):
 
     def update_status(self, message: str) -> None:
         self._status_bar.showMessage(message)
+
+    def start_elapsed_timer(self) -> None:
+        self._progress_view.start_elapsed()
+
+    def stop_elapsed_timer(self) -> None:
+        self._progress_view.stop_elapsed()
+
+    def show_cancel_btn(self, callback) -> None:
+        self._progress_view.show_cancel(callback)
+
+    def hide_cancel_btn(self) -> None:
+        self._progress_view.hide_cancel()
 
     @Slot()
     def _on_request_again(self) -> None:
