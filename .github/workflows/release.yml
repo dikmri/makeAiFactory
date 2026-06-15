@@ -43,6 +43,9 @@ jobs:
             hatchling
           .\.venv\Scripts\pip install . --no-deps
 
+      - name: Verify package is importable
+        run: .\.venv\Scripts\python -c "import makeaifactory.runtime; import makeaifactory.core; import makeaifactory.gui; print('OK - all subpackages importable')"
+
       - name: Generate icon
         run: .\.venv\Scripts\python tools\create_icon.py
 
