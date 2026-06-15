@@ -11,6 +11,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from .gui.icon_data import app_icon
+
 from .constants import APP_NAME, SUPPORTED_IMAGE_EXTENSIONS
 from .core.app_controller import AppController
 from .core.install_config import load_runtime_config, save_runtime_config
@@ -72,6 +74,7 @@ def run_app() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
+    app.setWindowIcon(app_icon())
 
     exe_dir = _exe_dir()
 
