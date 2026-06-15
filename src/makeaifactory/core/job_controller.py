@@ -16,7 +16,7 @@ from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, p
 from ..comfy.server_controller import ComfyServerController
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
-from ..core.vram_monitor import VramMonitor
+from ..core.vram_monitor import RamMonitor, VramMonitor
 from ..domain.errors import OutputNotFoundError
 from ..domain.job import Job
 from ..domain.progress import BenchmarkResult, JobProgress, JobState
@@ -37,12 +37,14 @@ class JobController:
         settings: SettingsStore,
         template: dict,
         gpu_info: "GpuInfo | None" = None,
+        ram_total_gb: float = 0.0,
     ):
         self._paths = paths
         self._server = server
         self._settings = settings
         self._template = template
         self._gpu_info = gpu_info
+        self._ram_total_gb = ram_total_gb
         self._current_job: Job | None = None
         self._client: ComfyApiClient | None = None
 
@@ -103,8 +105,8 @@ class JobController:
         prompt_id = await client.queue_prompt(patched)
         job.prompt_id = prompt_id
 
-        # VRAM計測しながら生成を監視
-        async with VramMonitor() as vram:
+        # VRAM・RAM を同時計測しながら生成を監視
+        async with VramMonitor() as vram, RamMonitor(total_gb=self._ram_total_gb) as ram:
             tracker = ProgressTracker(
                 on_progress=on_progress,
                 node_labels=build_node_labels(self._template),
@@ -141,6 +143,9 @@ class JobController:
             vram_total_gb=self._gpu_info.vram_gb if self._gpu_info else 0.0,
             gpu_name=self._gpu_info.name if self._gpu_info else "",
             vram_mode=self._settings.vram_mode,
+            ram_peak_gb=ram.peak_used_gb,
+            ram_avg_gb=ram.avg_used_gb,
+            ram_total_gb=self._ram_total_gb,
         )
 
         with (job_dir / "job.json").open("w", encoding="utf-8") as f:
@@ -167,27 +172,37 @@ class JobController:
         secs_rem = int(bench.elapsed_sec % 60)
         time_str = f"{mins}分{secs_rem}秒 ({bench.elapsed_sec:.1f}秒)"
         vram_pct = (bench.vram_peak_gb / bench.vram_total_gb * 100) if bench.vram_total_gb > 0 else 0.0
+        ram_pct  = (bench.ram_peak_gb  / bench.ram_total_gb  * 100) if bench.ram_total_gb  > 0 else 0.0
 
         # ── 人間向けログ (メインログファイルに記録) ─────────────────────
-        sep = "=" * 52
+        sep = "=" * 60
         lines = [
             sep,
             "  [BENCHMARK] 生成ベンチマーク結果",
-            f"  日時     : {timestamp}",
-            f"  GPU      : {bench.gpu_name} ({bench.vram_total_gb:.1f} GB VRAM)",
-            f"  VRAMモード: {mode_label} ({bench.vram_mode})",
-            f"  入力画像  : {image_name}",
-            f"  生成時間  : {time_str}",
+            f"  日時      : {timestamp}",
+            f"  GPU       : {bench.gpu_name or '不明'} ({bench.vram_total_gb:.1f} GB VRAM)",
+            f"  VRAMモード : {mode_label} ({bench.vram_mode})",
+            f"  入力画像   : {image_name}",
+            f"  生成時間   : {time_str}",
         ]
         if bench.vram_available:
             lines.append(
-                f"  VRAM使用量: ピーク {bench.vram_peak_gb:.1f} GB / "
+                f"  VRAM使用量 : ピーク {bench.vram_peak_gb:.1f} GB / "
                 f"平均 {bench.vram_avg_gb:.1f} GB / "
                 f"搭載 {bench.vram_total_gb:.1f} GB "
-                f"(ピーク使用率 {vram_pct:.1f}%)"
+                f"(ピーク {vram_pct:.1f}%)"
             )
         else:
-            lines.append("  VRAM使用量: 計測不可 (nvidia-smi が見つかりません)")
+            lines.append("  VRAM使用量 : 計測不可 (nvidia-smi が見つかりません)")
+        if bench.ram_available:
+            lines.append(
+                f"  RAM使用量  : ピーク {bench.ram_peak_gb:.1f} GB / "
+                f"平均 {bench.ram_avg_gb:.1f} GB / "
+                f"搭載 {bench.ram_total_gb:.1f} GB "
+                f"(ピーク {ram_pct:.1f}%)"
+            )
+        else:
+            lines.append("  RAM使用量  : 計測不可")
         lines.append(sep)
         for line in lines:
             logger.info(line)
@@ -205,6 +220,7 @@ class JobController:
                         "vram_mode", "image_name",
                         "elapsed_sec", "elapsed_min",
                         "vram_peak_gb", "vram_avg_gb", "vram_peak_pct",
+                        "ram_total_gb", "ram_peak_gb", "ram_avg_gb", "ram_peak_pct",
                     ])
                 w.writerow([
                     timestamp,
@@ -215,8 +231,12 @@ class JobController:
                     f"{bench.elapsed_sec:.1f}",
                     f"{bench.elapsed_sec / 60:.2f}",
                     f"{bench.vram_peak_gb:.1f}" if bench.vram_available else "",
-                    f"{bench.vram_avg_gb:.1f}" if bench.vram_available else "",
-                    f"{vram_pct:.1f}" if bench.vram_available else "",
+                    f"{bench.vram_avg_gb:.1f}"  if bench.vram_available else "",
+                    f"{vram_pct:.1f}"           if bench.vram_available else "",
+                    f"{bench.ram_total_gb:.1f}",
+                    f"{bench.ram_peak_gb:.1f}"  if bench.ram_available else "",
+                    f"{bench.ram_avg_gb:.1f}"   if bench.ram_available else "",
+                    f"{ram_pct:.1f}"            if bench.ram_available else "",
                 ])
             logger.info("ベンチマークCSV更新: %s", csv_path)
         except Exception as exc:

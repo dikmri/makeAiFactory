@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+from datetime import datetime
 from pathlib import Path
 
 
@@ -19,6 +20,7 @@ def setup_logging(logs_dir: Path, level: int = logging.DEBUG) -> None:
     if root.handlers:
         return
 
+    # ローリングログ (app.log, 最大10MB×5世代)
     app_handler = logging.handlers.RotatingFileHandler(
         logs_dir / "app.log",
         maxBytes=10 * 1024 * 1024,
@@ -28,6 +30,16 @@ def setup_logging(logs_dir: Path, level: int = logging.DEBUG) -> None:
     app_handler.setFormatter(fmt)
     app_handler.setLevel(logging.DEBUG)
     root.addHandler(app_handler)
+
+    # 日付付きログ (makeaifactory_YYYYMMDD.log, 起動日ごとに1ファイル)
+    date_str = datetime.now().strftime("%Y%m%d")
+    date_handler = logging.FileHandler(
+        logs_dir / f"makeaifactory_{date_str}.log",
+        encoding="utf-8",
+    )
+    date_handler.setFormatter(fmt)
+    date_handler.setLevel(logging.DEBUG)
+    root.addHandler(date_handler)
 
     console = logging.StreamHandler()
     console.setFormatter(fmt)

@@ -195,20 +195,33 @@ class AppController:
     async def ensure_ready(self, on_progress: SetupCallback | None = None) -> None:
         if not self._state.is_ready:
             await self.setup(on_progress)
-        elif self._server is None or not self._server.is_running:
-            paths = self._paths
-            self._server = ComfyServerController(paths.python_exe, paths.comfyui_dir, paths.comfyui_log)
-            self._server.start(extra_flags=self._vram_flags())
-            from ..comfy.api_client import ComfyApiClient
-            client = ComfyApiClient(self._server.base_url)
-            await client.wait_until_ready(timeout_sec=COMFY_STARTUP_TIMEOUT)
+        else:
+            # setup() を経由しないパス (再起動後など) でも system_info を確保する
+            if self._system_info is None:
+                self._system_info = probe_system(self._paths.runtime_root)
+                try:
+                    validate_system(self._system_info)
+                except SystemUnsupportedError:
+                    self._state.set_setup_state(SetupState.FAILED)
+                    raise
+            if self._server is None or not self._server.is_running:
+                paths = self._paths
+                self._server = ComfyServerController(paths.python_exe, paths.comfyui_dir, paths.comfyui_log)
+                self._server.start(extra_flags=self._vram_flags())
+                from ..comfy.api_client import ComfyApiClient
+                client = ComfyApiClient(self._server.base_url)
+                await client.wait_until_ready(timeout_sec=COMFY_STARTUP_TIMEOUT)
 
     def get_job_controller(self) -> JobController:
         if self._job_ctrl is None:
             template = self._load_workflow_template()
             assert self._server is not None
-            gpu_info = self._system_info.primary_gpu if self._system_info else None
-            self._job_ctrl = JobController(self._paths, self._server, self._settings, template, gpu_info=gpu_info)
+            gpu_info    = self._system_info.primary_gpu if self._system_info else None
+            ram_total   = self._system_info.ram_gb      if self._system_info else 0.0
+            self._job_ctrl = JobController(
+                self._paths, self._server, self._settings, template,
+                gpu_info=gpu_info, ram_total_gb=ram_total,
+            )
         return self._job_ctrl
 
     def stop_server(self) -> None:

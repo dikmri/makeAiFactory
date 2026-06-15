@@ -57,15 +57,24 @@ class JobProgress:
 class BenchmarkResult:
     """1回の動画生成で計測したパフォーマンス情報。"""
     elapsed_sec: float = 0.0
+    # VRAM
     vram_peak_gb: float = 0.0    # nvidia-smi 計測値 (0 = 取得不可)
     vram_avg_gb: float = 0.0
     vram_total_gb: float = 0.0   # GPU 搭載 VRAM 合計
     gpu_name: str = ""
     vram_mode: str = "normal"    # "normal" | "low" | "novram"
+    # システム RAM (novram モードで重要)
+    ram_peak_gb: float = 0.0     # 生成中の RAM 使用量ピーク
+    ram_avg_gb: float = 0.0
+    ram_total_gb: float = 0.0    # 搭載 RAM 合計
 
     @property
     def vram_available(self) -> bool:
         return self.vram_peak_gb > 0.0
+
+    @property
+    def ram_available(self) -> bool:
+        return self.ram_peak_gb > 0.0
 
 
 @dataclass
