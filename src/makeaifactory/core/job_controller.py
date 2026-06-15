@@ -5,8 +5,9 @@ import json
 import logging
 import random
 import shutil
+import time
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.output_resolver import resolve_output_mp4
@@ -15,9 +16,13 @@ from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, p
 from ..comfy.server_controller import ComfyServerController
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
+from ..core.vram_monitor import VramMonitor
 from ..domain.errors import OutputNotFoundError
 from ..domain.job import Job
-from ..domain.progress import JobProgress, JobState
+from ..domain.progress import BenchmarkResult, JobProgress, JobState
+
+if TYPE_CHECKING:
+    from ..runtime.system_probe import GpuInfo
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +36,13 @@ class JobController:
         server: ComfyServerController,
         settings: SettingsStore,
         template: dict,
+        gpu_info: "GpuInfo | None" = None,
     ):
         self._paths = paths
         self._server = server
         self._settings = settings
         self._template = template
+        self._gpu_info = gpu_info
         self._current_job: Job | None = None
         self._client: ComfyApiClient | None = None
 
@@ -43,10 +50,11 @@ class JobController:
         self,
         input_image: Path,
         on_progress: ProgressCallback | None = None,
-    ) -> Path:
+    ) -> tuple[Path, BenchmarkResult]:
         job = Job()
         self._current_job = job
         logger.info("Job開始: %s", job.job_id)
+        start_time = time.monotonic()
 
         job_dir = self._paths.job_dir(job.job_id, job.date_str)
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -95,15 +103,16 @@ class JobController:
         prompt_id = await client.queue_prompt(patched)
         job.prompt_id = prompt_id
 
-        # progress 追跡
-        tracker = ProgressTracker(
-            on_progress=on_progress,
-            node_labels=build_node_labels(self._template),
-        )
-        async for event in client.watch_progress(prompt_id):
-            tracker.handle_event(event)
-            if event.event_type == "execution_error":
-                break
+        # VRAM計測しながら生成を監視
+        async with VramMonitor() as vram:
+            tracker = ProgressTracker(
+                on_progress=on_progress,
+                node_labels=build_node_labels(self._template),
+            )
+            async for event in client.watch_progress(prompt_id):
+                tracker.handle_event(event)
+                if event.event_type == "execution_error":
+                    break
 
         # history 取得
         job.status = JobState.RESOLVING_OUTPUT
@@ -124,12 +133,25 @@ class JobController:
         job.output_path = str(final_output)
         job.status = JobState.COMPLETED
 
+        elapsed = time.monotonic() - start_time
+        bench = BenchmarkResult(
+            elapsed_sec=elapsed,
+            vram_peak_gb=vram.peak_gb,
+            vram_avg_gb=vram.avg_gb,
+            vram_total_gb=self._gpu_info.vram_gb if self._gpu_info else 0.0,
+            gpu_name=self._gpu_info.name if self._gpu_info else "",
+            vram_mode=self._settings.vram_mode,
+        )
+
         with (job_dir / "job.json").open("w", encoding="utf-8") as f:
             json.dump(job.to_dict(), f, ensure_ascii=False, indent=2)
 
-        logger.info("Job完了: %s → %s", job.job_id, final_output)
+        logger.info(
+            "Job完了: %s → %s (%.0fs, VRAMピーク=%.1fGB, モード=%s)",
+            job.job_id, final_output, elapsed, vram.peak_gb, self._settings.vram_mode,
+        )
         _notify(on_progress, JobProgress(state=JobState.COMPLETED, message="完成！"))
-        return final_output
+        return final_output, bench
 
     async def cancel_current(self) -> None:
         if self._client:

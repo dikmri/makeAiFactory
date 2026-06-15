@@ -175,7 +175,7 @@ class AppController:
 
         _progress(SetupState.VALIDATING_COMFYUI, "ComfyUIを検証しています...")
         self._server = ComfyServerController(paths.python_exe, paths.comfyui_dir, paths.comfyui_log)
-        self._server.start()
+        self._server.start(extra_flags=self._vram_flags())
         from ..comfy.api_client import ComfyApiClient
         client = ComfyApiClient(self._server.base_url)
         await client.wait_until_ready(timeout_sec=COMFY_STARTUP_TIMEOUT)
@@ -188,13 +188,17 @@ class AppController:
 
         _progress(SetupState.READY, "セットアップ完了！", pct=100.0)
 
+    def _vram_flags(self) -> list[str]:
+        from ..constants import VRAM_MODE_FLAGS
+        return VRAM_MODE_FLAGS.get(self._settings.vram_mode, [])
+
     async def ensure_ready(self, on_progress: SetupCallback | None = None) -> None:
         if not self._state.is_ready:
             await self.setup(on_progress)
         elif self._server is None or not self._server.is_running:
             paths = self._paths
             self._server = ComfyServerController(paths.python_exe, paths.comfyui_dir, paths.comfyui_log)
-            self._server.start()
+            self._server.start(extra_flags=self._vram_flags())
             from ..comfy.api_client import ComfyApiClient
             client = ComfyApiClient(self._server.base_url)
             await client.wait_until_ready(timeout_sec=COMFY_STARTUP_TIMEOUT)
@@ -203,7 +207,8 @@ class AppController:
         if self._job_ctrl is None:
             template = self._load_workflow_template()
             assert self._server is not None
-            self._job_ctrl = JobController(self._paths, self._server, self._settings, template)
+            gpu_info = self._system_info.primary_gpu if self._system_info else None
+            self._job_ctrl = JobController(self._paths, self._server, self._settings, template, gpu_info=gpu_info)
         return self._job_ctrl
 
     def stop_server(self) -> None:

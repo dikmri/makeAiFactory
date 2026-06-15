@@ -56,7 +56,7 @@ class ComfyServerController:
     def is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
-    def start(self) -> None:
+    def start(self, extra_flags: list[str] | None = None) -> None:
         if self.is_running:
             return
 
@@ -70,6 +70,7 @@ class ComfyServerController:
             "--listen", COMFY_HOST,
             "--port", str(self._port),
             "--disable-auto-launch",
+            *(extra_flags or []),
         ]
 
         import os

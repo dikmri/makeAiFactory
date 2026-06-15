@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
@@ -140,6 +140,26 @@ class MainWindow(QMainWindow):
         change_loc_action.triggered.connect(self._change_install_location)
         settings_menu.addAction(change_loc_action)
 
+        settings_menu.addSeparator()
+        vram_menu = settings_menu.addMenu("VRAMモード")
+        self._vram_group = QActionGroup(self)
+        self._vram_group.setExclusive(True)
+        self._vram_actions: dict[str, QAction] = {}
+        for mode, label in [
+            ("normal", "通常モード (推奨: 16GB+)"),
+            ("low",    "低VRAMモード --lowvram (8-15GB)"),
+            ("novram", "超省VRAMモード --novram (～8GB / 低速)"),
+        ]:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setChecked(mode == "normal")
+            act.triggered.connect(lambda checked, m=mode: self._on_vram_mode_selected(m))
+            self._vram_group.addAction(act)
+            vram_menu.addAction(act)
+            self._vram_actions[mode] = act
+
+        self._vram_mode_callback = None
+
         help_menu = menu_bar.addMenu("ヘルプ")
         log_action = QAction("ログを開く", self)
         log_action.triggered.connect(self._open_logs)
@@ -163,6 +183,7 @@ class MainWindow(QMainWindow):
         self._system_info_text: str = ""
         self._repair_callback = None
         self._change_location_cb = None
+        self._vram_mode_callback = None
 
     def set_paths(self, logs_dir: Path, output_dir: Path) -> None:
         self._logs_dir = logs_dir
@@ -176,6 +197,17 @@ class MainWindow(QMainWindow):
 
     def set_change_location_callback(self, cb) -> None:
         self._change_location_cb = cb
+
+    def set_vram_mode_callback(self, cb) -> None:
+        self._vram_mode_callback = cb
+
+    def set_current_vram_mode(self, mode: str) -> None:
+        if mode in self._vram_actions:
+            self._vram_actions[mode].setChecked(True)
+
+    def _on_vram_mode_selected(self, mode: str) -> None:
+        if self._vram_mode_callback:
+            self._vram_mode_callback(mode)
 
     @Slot()
     def show_drop_page(self) -> None:
@@ -196,16 +228,24 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
         self._progress_view.set_indeterminate(message)
 
-    @Slot(Path, str, float)
-    def show_result(self, output_path: Path, source_stem: str = "", elapsed_sec: float = 0.0) -> None:
+    @Slot(Path, str, float, float, float)
+    def show_result(
+        self,
+        output_path: Path,
+        source_stem: str = "",
+        elapsed_sec: float = 0.0,
+        vram_peak_gb: float = 0.0,
+        vram_avg_gb: float = 0.0,
+    ) -> None:
         self._progress_view.stop_elapsed()
         self._progress_view.hide_cancel()
         self._stack.setCurrentIndex(_PAGE_RESULT)
-        self._result_view.show_result(output_path, source_stem, elapsed_sec)
+        self._result_view.show_result(output_path, source_stem, elapsed_sec, vram_peak_gb, vram_avg_gb)
         mins = int(elapsed_sec // 60)
         secs = int(elapsed_sec % 60)
         elapsed_str = f" ({mins}分{secs}秒)" if mins > 0 else (f" ({secs}秒)" if secs > 0 else "")
-        self._status_bar.showMessage(f"完成: {output_path.name}{elapsed_str}")
+        vram_str = f" | VRAM peak: {vram_peak_gb:.1f}GB" if vram_peak_gb > 0 else ""
+        self._status_bar.showMessage(f"完成: {output_path.name}{elapsed_str}{vram_str}")
 
     def show_error(self, title: str, message: str, detail: str = "", show_repair: bool = False) -> None:
         repair = ErrorDialog.show_error(title, message, detail, self, show_repair)

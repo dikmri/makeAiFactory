@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..constants import VRAM_MINIMUM_GB
+from ..constants import VRAM_MINIMUM_GB, VRAM_RECOMMENDED_GB
 from ..domain.errors import SystemUnsupportedError
 
 logger = logging.getLogger(__name__)
@@ -160,4 +160,12 @@ def validate_system(info: SystemInfo) -> None:
     gpu = info.primary_gpu
     assert gpu is not None
     if gpu.vram_gb < VRAM_MINIMUM_GB:
-        logger.warning("VRAM %.1f GB は推奨 %d GB 未満ですが続行します。", gpu.vram_gb, VRAM_MINIMUM_GB)
+        logger.warning(
+            "VRAM %.1f GB は最低要件 %d GB 未満です。生成に失敗する可能性があります。",
+            gpu.vram_gb, VRAM_MINIMUM_GB,
+        )
+    elif gpu.vram_gb < VRAM_RECOMMENDED_GB:
+        logger.warning(
+            "VRAM %.1f GB は推奨 %d GB 未満です。「設定 > VRAMモード」で低VRAMモードまたは超省VRAMモードの使用を推奨します。",
+            gpu.vram_gb, VRAM_RECOMMENDED_GB,
+        )

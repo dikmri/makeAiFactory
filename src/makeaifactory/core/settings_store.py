@@ -11,6 +11,7 @@ _DEFAULTS = {
     "save_base_video": False,
     "developer_mode": False,
     "agreed_to_terms": False,
+    "vram_mode": "normal",   # "normal" | "low" | "novram"
 }
 
 
@@ -61,3 +62,8 @@ class SettingsStore:
 
     def agree_to_terms(self) -> None:
         self.set("agreed_to_terms", True)
+
+    @property
+    def vram_mode(self) -> str:
+        v = str(self.get("vram_mode"))
+        return v if v in ("normal", "low", "novram") else "normal"

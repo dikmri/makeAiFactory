@@ -54,6 +54,21 @@ class JobProgress:
 
 
 @dataclass
+class BenchmarkResult:
+    """1回の動画生成で計測したパフォーマンス情報。"""
+    elapsed_sec: float = 0.0
+    vram_peak_gb: float = 0.0    # nvidia-smi 計測値 (0 = 取得不可)
+    vram_avg_gb: float = 0.0
+    vram_total_gb: float = 0.0   # GPU 搭載 VRAM 合計
+    gpu_name: str = ""
+    vram_mode: str = "normal"    # "normal" | "low" | "novram"
+
+    @property
+    def vram_available(self) -> bool:
+        return self.vram_peak_gb > 0.0
+
+
+@dataclass
 class ComfyProgressEvent:
     event_type: str
     prompt_id: str = ""

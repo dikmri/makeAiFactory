@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 class _AsyncSignals(QObject):
     setup_progress = Signal(SetupProgress)
     job_progress   = Signal(JobProgress)
-    job_done       = Signal(Path, str, float)   # output, source_stem, elapsed_sec
+    job_done       = Signal(Path, str, float, float, float)  # output, stem, elapsed, vram_peak, vram_avg
     batch_progress = Signal(str, float, str)     # message, pct, detail
     batch_done     = Signal(int, int, float)     # completed, total, elapsed_sec
     error          = Signal(str, str, str, bool)
@@ -98,6 +98,21 @@ def run_app() -> int:
             )
 
     window.set_change_location_callback(_change_install_location)
+
+    def _on_vram_mode_change(mode: str) -> None:
+        settings.set("vram_mode", mode)
+        from .constants import VRAM_MODE_LABELS
+        label = VRAM_MODE_LABELS.get(mode, mode)
+        QMessageBox.information(
+            window,
+            "VRAMモードを変更しました",
+            f"{label} に設定しました。\n\n次回起動時に反映されます。\n"
+            "（今すぐ反映するにはアプリを再起動してください）",
+        )
+
+    window.set_vram_mode_callback(_on_vram_mode_change)
+    window.set_current_vram_mode(settings.vram_mode)
+
     signals = _AsyncSignals()
 
     # バッチキャンセル用フラグ（スレッドセーフ）
@@ -123,9 +138,9 @@ def run_app() -> int:
     def _on_job_progress(p: JobProgress) -> None:
         window.show_progress(p.message, p.percent)
 
-    @Slot(Path, str, float)
-    def _on_job_done(output: Path, source_stem: str, elapsed_sec: float) -> None:
-        window.show_result(output, source_stem, elapsed_sec)
+    @Slot(Path, str, float, float, float)
+    def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
+        window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
 
     @Slot(str, float, str)
     def _on_batch_progress(message: str, pct: float, detail: str) -> None:
@@ -155,9 +170,9 @@ def run_app() -> int:
         window.show_drop_page()
         window.show_error(title, msg, detail, show_repair)
 
-    signals.setup_progress.connect(_on_setup_progress, Qt.ConnectionType.QueuedConnection)
-    signals.job_progress.connect(_on_job_progress,  Qt.ConnectionType.QueuedConnection)
-    signals.job_done.connect(_on_job_done,           Qt.ConnectionType.QueuedConnection)
+    signals.setup_progress.connect(_on_setup_progress,  Qt.ConnectionType.QueuedConnection)
+    signals.job_progress.connect(_on_job_progress,      Qt.ConnectionType.QueuedConnection)
+    signals.job_done.connect(_on_job_done,               Qt.ConnectionType.QueuedConnection)
     signals.batch_progress.connect(_on_batch_progress, Qt.ConnectionType.QueuedConnection)
     signals.batch_done.connect(_on_batch_done,       Qt.ConnectionType.QueuedConnection)
     signals.error.connect(_on_error,                 Qt.ConnectionType.QueuedConnection)
@@ -221,15 +236,12 @@ def run_app() -> int:
             signals.error.emit("セットアップ失敗", str(e), "", True)
 
     async def _run_job(image_path: Path) -> None:
-        start = time.monotonic()
-
         def _cb(p: JobProgress):
             signals.job_progress.emit(p)
         try:
             job_ctrl = ctrl.get_job_controller()
-            output = await job_ctrl.run_job(image_path, on_progress=_cb)
-            elapsed = time.monotonic() - start
-            signals.job_done.emit(output, image_path.stem, elapsed)
+            output, bench = await job_ctrl.run_job(image_path, on_progress=_cb)
+            signals.job_done.emit(output, image_path.stem, bench.elapsed_sec, bench.vram_peak_gb, bench.vram_avg_gb)
         except MakeAiFactoryError as e:
             signals.error.emit("生成失敗", str(e), "", True)
         except Exception as e:
@@ -267,7 +279,7 @@ def run_app() -> int:
 
             try:
                 job_ctrl = ctrl.get_job_controller()
-                output = await job_ctrl.run_job(image_path, on_progress=_cb)
+                output, _bench = await job_ctrl.run_job(image_path, on_progress=_cb)
                 shutil.move(str(image_path), str(end_dir / image_path.name))
                 shutil.copy2(str(output), str(output_folder / f"{image_path.stem}.mp4"))
                 completed += 1

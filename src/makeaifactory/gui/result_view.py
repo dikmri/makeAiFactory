@@ -49,6 +49,12 @@ class ResultView(QWidget):
         self._time_label.setVisible(False)
         layout.addWidget(self._time_label)
 
+        self._bench_label = QLabel("")
+        self._bench_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._bench_label.setStyleSheet("color: #666; font-size: 12px;")
+        self._bench_label.setVisible(False)
+        layout.addWidget(self._bench_label)
+
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
 
@@ -86,7 +92,14 @@ class ResultView(QWidget):
             QPushButton:pressed { background: #0d47a1; }
         """
 
-    def show_result(self, output_path: Path, source_stem: str = "", elapsed_sec: float = 0.0) -> None:
+    def show_result(
+        self,
+        output_path: Path,
+        source_stem: str = "",
+        elapsed_sec: float = 0.0,
+        vram_peak_gb: float = 0.0,
+        vram_avg_gb: float = 0.0,
+    ) -> None:
         self._output_path = output_path
         self._source_stem = source_stem
         if elapsed_sec > 0:
@@ -97,6 +110,13 @@ class ResultView(QWidget):
             self._time_label.setVisible(True)
         else:
             self._time_label.setVisible(False)
+
+        if vram_peak_gb > 0:
+            bench_str = f"VRAMピーク: {vram_peak_gb:.1f} GB  |  平均: {vram_avg_gb:.1f} GB"
+            self._bench_label.setText(bench_str)
+            self._bench_label.setVisible(True)
+        else:
+            self._bench_label.setVisible(False)
         try:
             self._player.setSource(QUrl.fromLocalFile(str(output_path)))
             self._player.play()
