@@ -3,12 +3,21 @@ import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-# spec ファイルと同階層の .venv を基準にする (SPECPATH は PyInstaller が設定する)
-_site_pkgs = Path(SPECPATH) / '.venv' / 'Lib' / 'site-packages'
+# spec ファイルと同階層を基準にする (SPECPATH は PyInstaller が設定する)
+_spec_dir = Path(SPECPATH)
+_src_path = str(_spec_dir / 'src')
+_site_pkgs = _spec_dir / '.venv' / 'Lib' / 'site-packages'
+
+# makeaifactory パッケージを PyInstaller が認識できるよう sys.path に追加
+if _src_path not in sys.path:
+    sys.path.insert(0, _src_path)
 
 datas = [('app/manifest', 'app/manifest'), ('app/workflow', 'app/workflow')]
 binaries = []
 hiddenimports = []
+
+# makeaifactory 全サブパッケージを明示的に収集
+hiddenimports += collect_submodules('makeaifactory')
 
 # websockets: datas に直接追加して _internal/ 以下に展開させる
 _ws = _site_pkgs / 'websockets'
@@ -28,7 +37,7 @@ for _pkg in ('httpx', 'pydantic', 'aiofiles'):
 
 a = Analysis(
     ['makeaifactory_launcher.py'],
-    pathex=['src'],
+    pathex=[_src_path],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
