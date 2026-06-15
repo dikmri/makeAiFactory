@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "_note": "commit hashは2026-06-14時点の最新。使用前にGitHubで実際に存在するか確認してください。",
+  "custom_nodes": [
+    {
+      "name": "ComfyUI-GGUF",
+      "repo": "https://github.com/city96/ComfyUI-GGUF",
+      "commit": "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
+      "zip_url": "https://github.com/city96/ComfyUI-GGUF/archive/6ea2651e7df66d7585f6ffee804b20e92fb38b8a.zip",
+      "required_classes": ["UnetLoaderGGUF"],
+      "has_requirements": true
+    },
+    {
+      "name": "ComfyUI-KJNodes",
+      "repo": "https://github.com/kijai/ComfyUI-KJNodes",
+      "commit": "3e80b28dec889b0d082c3bd3aeb0bf30ab6b5ab2",
+      "zip_url": "https://github.com/kijai/ComfyUI-KJNodes/archive/3e80b28dec889b0d082c3bd3aeb0bf30ab6b5ab2.zip",
+      "required_classes": [
+        "PathchSageAttentionKJ",
+        "CFGZeroStarAndInit",
+        "WanVideoNAG",
+        "SomethingToString"
+      ],
+      "has_requirements": true
+    },
+    {
+      "name": "ComfyUI-VideoHelperSuite",
+      "repo": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+      "commit": "4ee72c065db22c9d96c2427954dc69e7b908444b",
+      "zip_url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite/archive/4ee72c065db22c9d96c2427954dc69e7b908444b.zip",
+      "required_classes": ["VHS_VideoCombine"],
+      "has_requirements": true
+    },
+    {
+      "name": "rgthree-comfy",
+      "repo": "https://github.com/rgthree/rgthree-comfy",
+      "commit": "738105af5fb14e96fbecaf406dc356e284797e8c",
+      "zip_url": "https://github.com/rgthree/rgthree-comfy/archive/738105af5fb14e96fbecaf406dc356e284797e8c.zip",
+      "required_classes": ["Power Lora Loader (rgthree)"],
+      "has_requirements": true
+    },
+    {
+      "name": "ComfyUI-Easy-Use",
+      "repo": "https://github.com/yolain/ComfyUI-Easy-Use",
+      "commit": "625efbfa2fc20c31797dfffcbb41a26b6d91ab7b",
+      "zip_url": "https://github.com/yolain/ComfyUI-Easy-Use/archive/625efbfa2fc20c31797dfffcbb41a26b6d91ab7b.zip",
+      "required_classes": [
+        "easy mathInt",
+        "easy int",
+        "easy seed"
+      ],
+      "has_requirements": true,
+      "_note": "easy imageSwitch, easy promptConcat等はruntime templateから除去済みのため不要"
+    },
+    {
+      "name": "DaxNodes",
+      "repo": "https://github.com/Daxamur/DaxNodes",
+      "commit": "fd3144265474aced3010951398b9f6daae799f10",
+      "zip_url": "https://github.com/Daxamur/DaxNodes/archive/fd3144265474aced3010951398b9f6daae799f10.zip",
+      "required_classes": ["ResolutionPickerI2V"],
+      "has_requirements": true,
+      "_note": "当初 kijai/ComfyUI-WanVideoWrapper と誤記。WanImageToVideo はComfyUI本体内蔵。requirements.txtのcolor-matcher経由でscikit-image==0.20.xが引き込まれるが、インストール前に_patch_all_requirementsで>=0.25.0にパッチされるため問題なし"
+    },
+    {
+      "name": "ComfyUI_essentials",
+      "repo": "https://github.com/cubiq/ComfyUI_essentials",
+      "commit": "9d9f4bedfc9f0321c19faf71855e228c93bd0dc9",
+      "zip_url": "https://github.com/cubiq/ComfyUI_essentials/archive/9d9f4bedfc9f0321c19faf71855e228c93bd0dc9.zip",
+      "required_classes": ["ImageRemoveAlpha+"],
+      "has_requirements": true,
+      "_note": "当初 was-node-suite-comfyui と誤記。cubiq/ComfyUI_essentials が正しいリポジトリ"
+    },
+    {
+      "name": "ComfyLiterals",
+      "repo": "https://github.com/M1kep/ComfyLiterals",
+      "commit": "bdddb08ca82d90d75d97b1d437a652e0284a32ac",
+      "zip_url": "https://github.com/M1kep/ComfyLiterals/archive/bdddb08ca82d90d75d97b1d437a652e0284a32ac.zip",
+      "required_classes": ["Float", "Int"],
+      "has_requirements": false,
+      "_note": "class_type='Float'/'Int' のシンプルなリテラルノード。PrimitiveFloat/PrimitiveIntとは別物"
+    },
+    {
+      "name": "comfyui_bmad_nodes",
+      "repo": "https://github.com/bmad4ever/comfyui_bmad_nodes",
+      "commit": "4fb4f432f9f8d8fb6e53cde788369b86bbfec515",
+      "zip_url": "https://github.com/bmad4ever/comfyui_bmad_nodes/archive/4fb4f432f9f8d8fb6e53cde788369b86bbfec515.zip",
+      "required_classes": ["String to Float"],
+      "has_requirements": true,
+      "_note": "class_type='String to Float' を提供。jamesWalker55/comfyui-variousのJWStringToFloatとは別"
+    },
+    {
+      "name": "ComfyUI_Custom_Nodes_AlekPet",
+      "repo": "https://github.com/AlekPet/ComfyUI_Custom_Nodes_AlekPet",
+      "commit": "9c2bb57d46b9cbcf2b3e6093900511bf2b5e5148",
+      "zip_url": "https://github.com/AlekPet/ComfyUI_Custom_Nodes_AlekPet/archive/9c2bb57d46b9cbcf2b3e6093900511bf2b5e5148.zip",
+      "required_classes": ["GoogleTranslateTextNode"],
+      "has_requirements": true,
+      "phase": "MVP_KEEP_OR_PHASE2_REMOVE",
+      "_note": "GoogleTranslateNode サブディレクトリに配置。Phase2で固定英語プロンプト化して除去を検討"
+    }
+  ],
+  "_builtin_class_types": [
+    "WanImageToVideo (ComfyUI本体 >= 0.3.x 内蔵)",
+    "PrimitiveStringMultiline (ComfyUI本体内蔵)",
+    "CLIPLoader, CLIPTextEncode, CLIPVisionEncode, CLIPVisionLoader",
+    "ImageScale, ImageUpscaleWithModel, KSamplerAdvanced, LoadImage",
+    "LoraLoaderModelOnly, ModelSamplingSD3, UpscaleModelLoader",
+    "VAEDecode, VAELoader"
+  ]
+}

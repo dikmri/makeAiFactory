@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
+# Runtime (ユーザーデータ・モデル等 - 数十GB)
+runtime/
+
+# ログ・一時ファイル
+*.log
+.write_test
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Thumbs.db
+.DS_Store
+
+# テスト用インストール先設定
+makeAiFactory_install.json
+
+# Pillow/画像テスト
+tools/__pycache__/

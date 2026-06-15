@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "description": "makeAiFactory実行用ワークフローパッチルール",
+  "patches": [
+    {
+      "node_id": "291",
+      "path": "inputs.image",
+      "value": ["189", 0],
+      "reason": "フォルダ読み込みswitchを除去し、D&D画像を直接使う"
+    },
+    {
+      "node_id": "188",
+      "path": "inputs.filename_prefix",
+      "value": "__OUTPUT_PREFIX__",
+      "reason": "出力先をプレースホルダー化し、実行時にjob_idを埋める"
+    },
+    {
+      "node_id": "129",
+      "path": "inputs.save_output",
+      "value": false,
+      "reason": "Base動画はMVPでは保存しない（デバッグ時のみ有効化）"
+    }
+  ],
+  "runtime_patches": [
+    {
+      "node_id": "189",
+      "path": "inputs.image",
+      "placeholder": "__UPLOADED_IMAGE_NAME__",
+      "reason": "D&Dでアップロードされた画像名を実行時に設定"
+    },
+    {
+      "node_id": "188",
+      "path": "inputs.filename_prefix",
+      "placeholder": "__OUTPUT_PREFIX__",
+      "format": "makeAiFactory/{job_id}/output",
+      "reason": "ジョブIDを含む出力パスを実行時に設定"
+    },
+    {
+      "node_id": "251",
+      "path": "inputs.seed",
+      "placeholder": "__SEED__",
+      "reason": "シードを実行時に設定（隠し設定でランダム化可能）"
+    }
+  ],
+  "dangerous_class_types": [
+    "Post Request Node",
+    "HTMLRendererNode",
+    "easy loadImagesForLoop",
+    "easy imagesCountInDirectory"
+  ],
+  "output_nodes": ["188"],
+  "debug_nodes": ["129"]
+}

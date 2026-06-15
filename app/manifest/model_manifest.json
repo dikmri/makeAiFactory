@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "name": "Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
+      "type": "unet",
+      "target": "ComfyUI/models/unet/Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
+      "source_url": "https://huggingface.co/Zuntan/Wan22-FastMix/resolve/main/Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
+      "sha256": "658ecff6c68bedfee70a8530a0bedfe5ed5beef1f9d9dcfc0f06557b7367b79b",
+      "size_bytes": 9651739136,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
+      "type": "unet",
+      "target": "ComfyUI/models/unet/Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
+      "source_url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
+      "sha256": "962d9c937a6e882562cd234ba87c5cfc19d6e99efbf0fc31b4dd9e43eb493ae6",
+      "size_bytes": 12003652096,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "clip",
+      "target": "ComfyUI/models/clip/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "source_url": "https://huggingface.co/chatpig/encoder/resolve/main/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "sha256": "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68",
+      "size_bytes": 6735906897,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "wan_2.1_vae.safetensors",
+      "type": "vae",
+      "target": "ComfyUI/models/vae/wan_2.1_vae.safetensors",
+      "source_url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+      "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b",
+      "size_bytes": 253815318,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "clip-vit-large-patch14.safetensors",
+      "type": "clip_vision",
+      "target": "ComfyUI/models/clip_vision/clip-vit-large-patch14.safetensors",
+      "source_url": "https://huggingface.co/SG161222/Verus_Vision_1.0b/resolve/main/clip-vit-large-patch14.safetensors",
+      "sha256": "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb",
+      "size_bytes": 1710540580,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
+      "type": "upscale_model",
+      "target": "ComfyUI/models/upscale_models/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
+      "source_url": "https://huggingface.co/Kim2091/2x-AnimeSharpV4/resolve/1a9339b5c308ab3990f6233be2c1169a75772878/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
+      "sha256": "b641c9eb10b43f26538177aa8f0fef8b9fc2a153afd1431d0a062a84c49ce6d0",
+      "size_bytes": 31359158,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+      "source_url": "https://huggingface.co/lightx2v/Wan2.1-I2V-14B-480P-StepDistill-CfgDistill-Lightx2v/resolve/main/loras/Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+      "sha256": "8833bd4fd7c8eabebf0bc8ee5cfaf47f4f310ce116928a02c1adf8941dd4b0f1",
+      "size_bytes": 739472104,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "NSFW-22-H-e8.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/NSFW-22-H-e8.safetensors",
+      "source_url": "https://huggingface.co/rahul7star/wan2.2Lora/resolve/1d1e553d07c1bb0e91765752413c4857e31df299/wan2.2/NSFW-22-H-e8.safetensors",
+      "sha256": "34e2144d3cd65360f97d09ccbe03e1c39a096df6c9234af5fe3899d1b63cda39",
+      "size_bytes": 613516752,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "note": "成人向けLoRA。配布前にライセンス確認必須"
+    },
+    {
+      "name": "NSFW-22-L-e8.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/NSFW-22-L-e8.safetensors",
+      "source_url": "https://huggingface.co/rahul7star/wan2.2Lora/resolve/main/NSFW-22-L-e8.safetensors",
+      "sha256": "d6b783742f4d5fd63a0223ae1d5bf64fc995a6b408480ac2a00528ae0d4146db",
+      "size_bytes": 613516752,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "note": "成人向けLoRA。配布前にライセンス確認必須"
+    },
+    {
+      "name": "wan22-m4crom4sti4-i2v-20epoc-high-k3nk.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/wan22-m4crom4sti4-i2v-20epoc-high-k3nk.safetensors",
+      "source_url": "https://huggingface.co/isokingsan/momoiro.club/resolve/main/wan22-m4crom4sti4-i2v-20epoc-high-k3nk.safetensors",
+      "sha256": "851c928737235b4a4a2c5993c893c79ee46a3131aa9b16eb56de1dcc576c3ad9",
+      "size_bytes": 306807976,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "wan22-m4crom4sti4-i2v-20epoc-low-k3nk.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/wan22-m4crom4sti4-i2v-20epoc-low-k3nk.safetensors",
+      "source_url": "https://huggingface.co/isokingsan/momoiro.club/resolve/main/wan22-m4crom4sti4-i2v-20epoc-low-k3nk.safetensors",
+      "sha256": "c8a940ad5ab59a15c7f39624f694482a020f0dd047cec56f498b58418d3d937c",
+      "size_bytes": 306807976,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "slop_twerk_HighNoise_merged3_7_v2.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/slop_twerk_HighNoise_merged3_7_v2.safetensors",
+      "source_url": "https://huggingface.co/Plimpumpam/sloptwwimagehigh/resolve/main/slop_twerk_HighNoise_merged3_7_v2.safetensors",
+      "sha256": "83fe88476f551aa0acdd119c6993de30910139b1635dc08c7f986fc3459d7cc5",
+      "size_bytes": 306847584,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    },
+    {
+      "name": "slop_twerk_LowNoise_merged3_7_v2.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/slop_twerk_LowNoise_merged3_7_v2.safetensors",
+      "source_url": "https://huggingface.co/dansterwow/wancrush/resolve/main/slop_twerk_LowNoise_merged3_7_v2.safetensors",
+      "sha256": "d70d23144d43ee6d7ffbd3d2d5cade1f0f9004a3e013a7c33dd2f91f37e438ea",
+      "size_bytes": 306847576,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED"
+    }
+  ]
+}

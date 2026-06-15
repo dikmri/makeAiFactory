@@ -1,0 +1,78 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install build dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python -m pip install --upgrade pip
+          .\.venv\Scripts\pip install `
+            pyinstaller `
+            PySide6 `
+            httpx `
+            websockets `
+            pydantic `
+            aiofiles `
+            pillow
+
+      - name: Generate icon
+        run: .\.venv\Scripts\python tools\create_icon.py
+
+      - name: Build EXE with PyInstaller
+        run: .\.venv\Scripts\pyinstaller makeAiFactory.spec --noconfirm
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $archive = "makeAiFactory-${tag}-windows.zip"
+          Compress-Archive -Path "dist\makeAiFactory\*" -DestinationPath $archive
+          $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
+          Write-Output "archive=${archive}" >> $env:GITHUB_OUTPUT
+          Write-Output "Archive: ${archive} (${size} MB)"
+        id: archive
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "makeAiFactory ${{ github.ref_name }}"
+          body: |
+            ## makeAiFactory ${{ github.ref_name }}
+
+            ### インストール方法
+            1. `makeAiFactory-${{ github.ref_name }}-windows.zip` をダウンロード
+            2. 任意のフォルダに解凍
+            3. `makeAiFactory.exe` を実行
+            4. インストール先を選択してセットアップ開始
+
+            ### 動作環境
+            - Windows 10 / 11 (64bit)
+            - NVIDIA GPU (VRAM 12GB 以上推奨)
+            - 約 45 GB の空き容量
+
+            > 初回セットアップ時に ComfyUI・Wan2.2 モデル等がダウンロードされます。
+          files: makeAiFactory-${{ github.ref_name }}-windows.zip
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: false
