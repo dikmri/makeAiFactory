@@ -19,6 +19,7 @@ _DANGEROUS_CLASS_TYPES = {
     "HTMLRendererNode",
     "easy loadImagesForLoop",
     "easy imagesCountInDirectory",
+    "GoogleTranslateTextNode",
 }
 
 

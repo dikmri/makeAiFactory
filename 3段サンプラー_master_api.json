@@ -1,7 +1,7 @@
 {
   "6": {
     "inputs": {
-      "sage_attention": "disabled",
+      "sage_attention": "auto",
       "allow_compile": false,
       "model": [
         "220",
@@ -15,7 +15,7 @@
   },
   "7": {
     "inputs": {
-      "sage_attention": "disabled",
+      "sage_attention": "auto",
       "allow_compile": false,
       "model": [
         "221",
@@ -266,7 +266,7 @@
   "139": {
     "inputs": {
       "default": 0,
-      "inStr": [
+      "string": [
         "137",
         0
       ]
@@ -310,7 +310,7 @@
   "159": {
     "inputs": {
       "default": 0,
-      "inStr": [
+      "string": [
         "160",
         0
       ]
@@ -905,7 +905,7 @@
   },
   "295": {
     "inputs": {
-      "unet_name": "Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf"
+      "unet_name": "easywan22Fastmix_highQ4KM.gguf"
     },
     "class_type": "UnetLoaderGGUF",
     "_meta": {

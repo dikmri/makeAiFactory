@@ -87,16 +87,6 @@
       "required_classes": ["String to Float"],
       "has_requirements": true,
       "_note": "class_type='String to Float' を提供。jamesWalker55/comfyui-variousのJWStringToFloatとは別"
-    },
-    {
-      "name": "ComfyUI_Custom_Nodes_AlekPet",
-      "repo": "https://github.com/AlekPet/ComfyUI_Custom_Nodes_AlekPet",
-      "commit": "9c2bb57d46b9cbcf2b3e6093900511bf2b5e5148",
-      "zip_url": "https://github.com/AlekPet/ComfyUI_Custom_Nodes_AlekPet/archive/9c2bb57d46b9cbcf2b3e6093900511bf2b5e5148.zip",
-      "required_classes": ["GoogleTranslateTextNode"],
-      "has_requirements": true,
-      "phase": "MVP_KEEP_OR_PHASE2_REMOVE",
-      "_note": "GoogleTranslateNode サブディレクトリに配置。Phase2で固定英語プロンプト化して除去を検討"
     }
   ],
   "_builtin_class_types": [

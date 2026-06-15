@@ -159,10 +159,7 @@
   },
   "48": {
     "inputs": {
-      "value": [
-        "297",
-        0
-      ]
+      "value": "A man and woman are having sex. The man is thrusting his penis in and out of her vagina. She is reaching orgasm.\nHer breasts are large and bounce well.\n\nnsfwsks.\npenis goes in and out of vagina,\n\nThe woman's skin is coated with clear oil, glistening and reflecting light. The woman's skin has a fine texture and is very beautiful.\n\nVery precise and realistic effects."
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -841,19 +838,6 @@
     "class_type": "UnetLoaderGGUF",
     "_meta": {
       "title": "Load WAN 2.2 Low (GGUF)"
-    }
-  },
-  "297": {
-    "inputs": {
-      "from_translate": "auto",
-      "to_translate": "en",
-      "manual_translate": false,
-      "Manual Trasnlate": "Manual Trasnlate",
-      "text": "男女がセックスをしている。男が彼女の膣にペニスを出し入れする。彼女はオーガズムに達している。\n彼女の胸は大きくてよく揺れる。\n\nnsfwsks.\npenis goes in and out of vagina,\n\n女性の肌には透明なオイルが塗られていて、テカテカと光を反射している。女性の肌はきめ細かく非常に綺麗だ。\n\nとても精密でリアルなエフェクト。"
-    },
-    "class_type": "GoogleTranslateTextNode",
-    "_meta": {
-      "title": "日本語プロンプト"
     }
   }
 }
