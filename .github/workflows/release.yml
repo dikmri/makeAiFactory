@@ -39,8 +39,9 @@ jobs:
             websockets `
             pydantic `
             aiofiles `
-            pillow
-          .\.venv\Scripts\pip install -e . --no-deps
+            pillow `
+            hatchling
+          .\.venv\Scripts\pip install . --no-deps
 
       - name: Generate icon
         run: .\.venv\Scripts\python tools\create_icon.py
