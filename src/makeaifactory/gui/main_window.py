@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
         self._drop_area.image_dropped.connect(self.image_dropped)
         dp_layout.addWidget(self._drop_area, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self._batch_btn = QPushButton("フォルダ内画像生成")
+        self._batch_btn = QPushButton("フォルダ選択")
         self._batch_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -220,13 +220,44 @@ class MainWindow(QMainWindow):
 
     @Slot(str, float, str)
     def show_progress(self, message: str, percent: float = 0.0, detail: str = "") -> None:
+        """セットアップ用 1バー進捗。"""
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
         self._progress_view.update(message, percent, detail)
 
     @Slot(str)
     def show_progress_indeterminate(self, message: str) -> None:
+        """セットアップ用不定プログレス。"""
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
         self._progress_view.set_indeterminate(message)
+
+    def enter_single_mode(self) -> None:
+        """単体生成モードに切り替え (2バー + ETA)。"""
+        self._stack.setCurrentIndex(_PAGE_PROGRESS)
+        self._progress_view.enter_single()
+
+    def enter_batch_mode(self) -> None:
+        """バッチ生成モードに切り替え (3バー + ETA)。"""
+        self._stack.setCurrentIndex(_PAGE_PROGRESS)
+        self._progress_view.enter_batch()
+
+    def update_single_progress(
+        self,
+        message: str,
+        overall_pct: float,
+        task_pct: float,
+        task_detail: str = "",
+    ) -> None:
+        self._progress_view.update_single(message, overall_pct, task_pct, task_detail)
+
+    def update_batch_progress(
+        self,
+        message: str,
+        all_pct: float,
+        image_pct: float,
+        task_pct: float,
+        task_detail: str = "",
+    ) -> None:
+        self._progress_view.update_batch(message, all_pct, image_pct, task_pct, task_detail)
 
     @Slot(Path, str, float, float, float)
     def show_result(

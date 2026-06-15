@@ -19,6 +19,27 @@ from .core.paths import AppPaths, _exe_dir
 from .core.settings_store import SettingsStore
 from .domain.errors import MakeAiFactoryError, SystemUnsupportedError
 from .domain.progress import JobProgress, JobState, SetupProgress, SetupState
+
+
+def _job_overall_pct(p: JobProgress) -> float:
+    """JobProgress から単体ジョブの全体進捗 (0-100) を算出する。
+    全体バーは 100% に到達するのが完了時の1回だけになるよう設計。"""
+    if p.state == JobState.UPLOADING:
+        return 5.0
+    if p.state == JobState.QUEUED:
+        return 8.0
+    if p.state == JobState.GENERATING:
+        return 10.0 + p.percent * 0.80   # 10-90%
+    if p.state == JobState.RESOLVING_OUTPUT:
+        return 92.0
+    if p.state == JobState.COMPLETED:
+        return 100.0
+    return 0.0
+
+
+def _task_pct(p: JobProgress) -> float:
+    """現在のステップバーに表示する進捗。生成中以外は不定 (-1)。"""
+    return p.percent if p.state == JobState.GENERATING else -1.0
 from .gui.batch_dialog import BatchDialog
 from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
@@ -31,7 +52,7 @@ class _AsyncSignals(QObject):
     setup_progress = Signal(SetupProgress)
     job_progress   = Signal(JobProgress)
     job_done       = Signal(Path, str, float, float, float)  # output, stem, elapsed, vram_peak, vram_avg
-    batch_progress = Signal(str, float, str)     # message, pct, detail
+    batch_progress = Signal(str, float, float, float, str)  # message, all_pct, image_pct, task_pct, detail
     batch_done     = Signal(int, int, float)     # completed, total, elapsed_sec
     error          = Signal(str, str, str, bool)
     app_quit       = Signal()
@@ -136,15 +157,20 @@ def run_app() -> int:
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
-        window.show_progress(p.message, p.percent)
+        window.update_single_progress(
+            p.message,
+            _job_overall_pct(p),
+            _task_pct(p),
+            p.message if p.state == JobState.GENERATING else "",
+        )
 
     @Slot(Path, str, float, float, float)
     def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
         window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
 
-    @Slot(str, float, str)
-    def _on_batch_progress(message: str, pct: float, detail: str) -> None:
-        window.show_progress(message, pct, detail)
+    @Slot(str, float, float, float, str)
+    def _on_batch_progress(message: str, all_pct: float, image_pct: float, task_pct: float, detail: str) -> None:
+        window.update_batch_progress(message, all_pct, image_pct, task_pct, detail)
 
     @Slot(int, int, float)
     def _on_batch_done(completed: int, total: int, elapsed_sec: float) -> None:
@@ -270,10 +296,13 @@ def run_app() -> int:
                 break
 
             def _cb(p: JobProgress, idx: int = i, name: str = image_path.name) -> None:
-                outer_pct = (idx + p.percent / 100) / total * 100
+                img_pct = _job_overall_pct(p)
+                all_pct = (idx + img_pct / 100) / total * 100
                 signals.batch_progress.emit(
-                    f"バッチ処理 ({idx + 1}/{total}): {name}",
-                    outer_pct,
+                    f"フォルダ生成 ({idx + 1}/{total}): {name}",
+                    all_pct,
+                    img_pct,
+                    _task_pct(p),
                     p.message,
                 )
 
@@ -302,8 +331,8 @@ def run_app() -> int:
 
     @Slot(Path)
     def _on_image_dropped(path: Path) -> None:
-        window.show_progress_indeterminate("生成を準備しています...")
-        window.start_elapsed_timer()
+        window.enter_single_mode()
+        window.update_single_progress("生成を準備しています...", 0.0, -1.0)
         pool = QThreadPool.globalInstance()
         pool.start(_Worker(_run_job(path), signals))
 
@@ -323,8 +352,8 @@ def run_app() -> int:
             pool = QThreadPool.globalInstance()
             pool.start(_Worker(_cancel_current_job(), signals))
 
-        window.show_progress_indeterminate(f"バッチ処理を開始しています...")
-        window.start_elapsed_timer()
+        window.enter_batch_mode()
+        window.update_batch_progress("フォルダ生成を開始しています...", 0.0, 0.0, -1.0)
         window.show_cancel_btn(_do_cancel)
 
         pool = QThreadPool.globalInstance()
