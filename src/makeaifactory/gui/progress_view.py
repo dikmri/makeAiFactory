@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 _BLUE = """
     QProgressBar {
@@ -42,6 +51,9 @@ _LABEL_BLUE  = "color: #4fc3f7; font-size: 11px;"
 _LABEL_GREEN = "color: #66bb6a; font-size: 11px;"
 _LABEL_AMBER = "color: #ffa726; font-size: 11px;"
 
+_IMG_MAX_W = 360
+_IMG_MAX_H = 220
+
 
 def _fmt(sec: float) -> str:
     m, s = int(sec // 60), int(sec % 60)
@@ -50,9 +62,9 @@ def _fmt(sec: float) -> str:
 
 class ProgressView(QWidget):
     """
-    セットアップ : 1バー (青)
-    単体生成     : 2バー — 青=全体進捗, 橙=現在のステップ
-    バッチ生成   : 3バー — 青=全体進捗, 緑=現在の画像, 橙=現在のステップ
+    セットアップ : 1バー (青) / 画像プレビューなし
+    単体生成     : 2バー — 青=全体進捗, 橙=現在のステップ / 入力画像表示
+    バッチ生成   : 3バー — 青=全体進捗, 緑=現在の画像, 橙=現在のステップ / 処理中画像表示
     """
 
     _SETUP  = "setup"
@@ -64,31 +76,58 @@ class ProgressView(QWidget):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(6)
-        layout.setContentsMargins(40, 20, 40, 20)
+        layout.setContentsMargins(40, 16, 40, 16)
 
-        # タイトル
+        # ── 画像プレビュー ────────────────────────────────────────────────
+        self._img_preview = QLabel()
+        self._img_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_preview.setMaximumWidth(_IMG_MAX_W + 8)
+        self._img_preview.setStyleSheet("""
+            QLabel {
+                background: #070710;
+                border: 1px solid #2a2a42;
+                border-radius: 8px;
+                padding: 4px;
+            }
+        """)
+        self._img_preview.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
+        self._img_preview.setVisible(False)
+        layout.addWidget(self._img_preview, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # ファイル名ラベル
+        self._img_name = QLabel("")
+        self._img_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_name.setStyleSheet("color: #666; font-size: 11px;")
+        self._img_name.setVisible(False)
+        layout.addWidget(self._img_name)
+
+        layout.addSpacing(4)
+
+        # ── タイトル ─────────────────────────────────────────────────────
         self._title = QLabel("処理中...")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._title.setStyleSheet("color: #eee; font-size: 16px; font-weight: bold;")
+        self._title.setStyleSheet("color: #eee; font-size: 15px; font-weight: bold;")
         self._title.setWordWrap(True)
         layout.addWidget(self._title)
-        layout.addSpacing(6)
+        layout.addSpacing(4)
 
-        # バー1: 全体進捗 (blue) — 常時表示
+        # ── バー1: 全体進捗 (blue) — 常時表示 ────────────────────────────
         self._lbl1 = QLabel("全体進捗")
         self._lbl1.setStyleSheet(_LABEL_BLUE)
         self._bar1 = self._mk_bar(_BLUE)
         layout.addWidget(self._lbl1)
         layout.addWidget(self._bar1)
 
-        # バー2: 現在の画像 (green) — バッチ時のみ
+        # ── バー2: 現在の画像 (green) — バッチ時のみ ─────────────────────
         self._lbl2 = QLabel("現在の画像")
         self._lbl2.setStyleSheet(_LABEL_GREEN)
         self._bar2 = self._mk_bar(_GREEN)
         layout.addWidget(self._lbl2)
         layout.addWidget(self._bar2)
 
-        # バー3: 現在のステップ (amber) — 単体/バッチ時
+        # ── バー3: 現在のステップ (amber) — 単体/バッチ時 ────────────────
         self._lbl3 = QLabel("現在のステップ")
         self._lbl3.setStyleSheet(_LABEL_AMBER)
         self._bar3 = self._mk_bar(_AMBER)
@@ -97,13 +136,13 @@ class ProgressView(QWidget):
 
         layout.addSpacing(4)
 
-        # 経過時間 / 予測完了時間
+        # ── 経過時間 / 予測完了時間 ───────────────────────────────────────
         self._eta = QLabel("")
         self._eta.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._eta.setStyleSheet("color: #888; font-size: 12px;")
         layout.addWidget(self._eta)
 
-        # 中断ボタン
+        # ── 中断ボタン ────────────────────────────────────────────────────
         self._cancel_btn = QPushButton("中断")
         self._cancel_btn.setStyleSheet("""
             QPushButton {
@@ -136,17 +175,47 @@ class ProgressView(QWidget):
         b.setFormat("%p%")
         return b
 
-    # ── レイアウト切り替え ─────────────────────────────────────────────
+    # ── 画像プレビュー ────────────────────────────────────────────────────
+
+    def set_preview_image(self, path: Path | None) -> None:
+        """入力画像をプレビュー表示する。None で非表示。"""
+        if path is None or not path.exists():
+            self._img_preview.clear()
+            self._img_preview.setVisible(False)
+            self._img_name.setVisible(False)
+            return
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            self._img_preview.setVisible(False)
+            self._img_name.setVisible(False)
+            return
+        scaled = pixmap.scaled(
+            _IMG_MAX_W, _IMG_MAX_H,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._img_preview.setPixmap(scaled)
+        self._img_preview.setVisible(True)
+        # ファイル名 (長い場合は省略)
+        name = path.name
+        if len(name) > 40:
+            name = name[:37] + "..."
+        self._img_name.setText(name)
+        self._img_name.setVisible(True)
+
+    # ── レイアウト切り替え ────────────────────────────────────────────────
 
     def _apply_setup_layout(self) -> None:
+        self._img_preview.setVisible(False)
+        self._img_name.setVisible(False)
         self._lbl1.setText("進捗")
         self._lbl1.setVisible(True)
         self._bar1.setVisible(True)
         for w in (self._lbl2, self._bar2, self._lbl3, self._bar3):
             w.setVisible(False)
 
-    def enter_single(self) -> None:
-        """単体生成モードに切り替え (2バー)。"""
+    def enter_single(self, image_path: Path | None = None) -> None:
+        """単体生成モードに切り替え (2バー + 画像プレビュー)。"""
         self._mode = self._SINGLE
         self._overall_pct = 0.0
         self._start_mono = time.monotonic()
@@ -159,10 +228,11 @@ class ProgressView(QWidget):
             w.setVisible(False)
         self._bar3.setRange(0, 0)  # indeterminate until generation starts
         self._eta.setText("")
+        self.set_preview_image(image_path)
         self._timer.start(500)
 
     def enter_batch(self) -> None:
-        """バッチ生成モードに切り替え (3バー)。"""
+        """バッチ生成モードに切り替え (3バー + 画像プレビュー)。"""
         self._mode = self._BATCH
         self._overall_pct = 0.0
         self._start_mono = time.monotonic()
@@ -176,9 +246,12 @@ class ProgressView(QWidget):
             w.setVisible(True)
         self._bar3.setRange(0, 0)
         self._eta.setText("")
+        self._img_preview.clear()
+        self._img_preview.setVisible(False)
+        self._img_name.setVisible(False)
         self._timer.start(500)
 
-    # ── 更新 ──────────────────────────────────────────────────────────
+    # ── 更新 ──────────────────────────────────────────────────────────────
 
     def update_setup(self, message: str, percent: float = -1.0) -> None:
         """セットアップ進捗 (1バー)。percent < 0 で不定。"""
@@ -231,7 +304,7 @@ class ProgressView(QWidget):
             self._bar3.setRange(0, 100)
             self._bar3.setValue(int(task_pct))
 
-    # ── タイマー ──────────────────────────────────────────────────────
+    # ── タイマー ──────────────────────────────────────────────────────────
 
     def _tick(self) -> None:
         elapsed = time.monotonic() - self._start_mono
@@ -252,7 +325,7 @@ class ProgressView(QWidget):
     def stop(self) -> None:
         self._timer.stop()
 
-    # ── 旧 API (後方互換) ──────────────────────────────────────────────
+    # ── 旧 API (後方互換) ─────────────────────────────────────────────────
 
     def update(self, message: str, percent: float = 0.0, detail: str = "") -> None:
         self.update_setup(message, percent)
@@ -270,7 +343,7 @@ class ProgressView(QWidget):
     def stop_elapsed(self) -> None:
         self.stop()
 
-    # ── 中断ボタン ────────────────────────────────────────────────────
+    # ── 中断ボタン ────────────────────────────────────────────────────────
 
     def show_cancel(self, callback) -> None:
         try:

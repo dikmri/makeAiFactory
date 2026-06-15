@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(540, 460)
+        self.setMinimumSize(540, 580)
         self._setup_style()
         self._build_ui()
         self._build_menu()
@@ -229,15 +229,19 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
         self._progress_view.set_indeterminate(message)
 
-    def enter_single_mode(self) -> None:
-        """単体生成モードに切り替え (2バー + ETA)。"""
+    def enter_single_mode(self, image_path: Path | None = None) -> None:
+        """単体生成モードに切り替え (2バー + 画像プレビュー + ETA)。"""
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
-        self._progress_view.enter_single()
+        self._progress_view.enter_single(image_path)
 
     def enter_batch_mode(self) -> None:
-        """バッチ生成モードに切り替え (3バー + ETA)。"""
+        """バッチ生成モードに切り替え (3バー + 画像プレビュー + ETA)。"""
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
         self._progress_view.enter_batch()
+
+    def set_current_image(self, image_path: Path) -> None:
+        """バッチ処理中に処理中の画像を更新する。"""
+        self._progress_view.set_preview_image(image_path)
 
     def update_single_progress(
         self,

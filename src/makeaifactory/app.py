@@ -54,10 +54,11 @@ class _AsyncSignals(QObject):
     setup_progress = Signal(SetupProgress)
     job_progress   = Signal(JobProgress)
     job_done       = Signal(Path, str, float, float, float)  # output, stem, elapsed, vram_peak, vram_avg
-    batch_progress = Signal(str, float, float, float, str)  # message, all_pct, image_pct, task_pct, detail
-    batch_done     = Signal(int, int, float)     # completed, total, elapsed_sec
-    error          = Signal(str, str, str, bool)
-    app_quit       = Signal()
+    batch_progress      = Signal(str, float, float, float, str)  # message, all_pct, image_pct, task_pct, detail
+    batch_current_image = Signal(Path)  # バッチ処理で処理中の画像が切り替わった
+    batch_done          = Signal(int, int, float)     # completed, total, elapsed_sec
+    error               = Signal(str, str, str, bool)
+    app_quit            = Signal()
 
 
 class _Worker(QRunnable):
@@ -175,6 +176,10 @@ def run_app() -> int:
     def _on_batch_progress(message: str, all_pct: float, image_pct: float, task_pct: float, detail: str) -> None:
         window.update_batch_progress(message, all_pct, image_pct, task_pct, detail)
 
+    @Slot(Path)
+    def _on_batch_current_image(image_path: Path) -> None:
+        window.set_current_image(image_path)
+
     @Slot(int, int, float)
     def _on_batch_done(completed: int, total: int, elapsed_sec: float) -> None:
         window.stop_elapsed_timer()
@@ -199,13 +204,14 @@ def run_app() -> int:
         window.show_drop_page()
         window.show_error(title, msg, detail, show_repair)
 
-    signals.setup_progress.connect(_on_setup_progress,  Qt.ConnectionType.QueuedConnection)
-    signals.job_progress.connect(_on_job_progress,      Qt.ConnectionType.QueuedConnection)
-    signals.job_done.connect(_on_job_done,               Qt.ConnectionType.QueuedConnection)
-    signals.batch_progress.connect(_on_batch_progress, Qt.ConnectionType.QueuedConnection)
-    signals.batch_done.connect(_on_batch_done,       Qt.ConnectionType.QueuedConnection)
-    signals.error.connect(_on_error,                 Qt.ConnectionType.QueuedConnection)
-    signals.app_quit.connect(app.quit,               Qt.ConnectionType.QueuedConnection)
+    signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
+    signals.job_progress.connect(_on_job_progress,              Qt.ConnectionType.QueuedConnection)
+    signals.job_done.connect(_on_job_done,                      Qt.ConnectionType.QueuedConnection)
+    signals.batch_progress.connect(_on_batch_progress,          Qt.ConnectionType.QueuedConnection)
+    signals.batch_current_image.connect(_on_batch_current_image, Qt.ConnectionType.QueuedConnection)
+    signals.batch_done.connect(_on_batch_done,                  Qt.ConnectionType.QueuedConnection)
+    signals.error.connect(_on_error,                            Qt.ConnectionType.QueuedConnection)
+    signals.app_quit.connect(app.quit,                          Qt.ConnectionType.QueuedConnection)
 
     # ─────────────────────────────────────────────────────────────────────
     # Async tasks
@@ -299,6 +305,8 @@ def run_app() -> int:
             if _batch_cancel.is_set():
                 break
 
+            signals.batch_current_image.emit(image_path)
+
             def _cb(p: JobProgress, idx: int = i, name: str = image_path.name) -> None:
                 img_pct = _job_overall_pct(p)
                 all_pct = (idx + img_pct / 100) / total * 100
@@ -335,7 +343,7 @@ def run_app() -> int:
 
     @Slot(Path)
     def _on_image_dropped(path: Path) -> None:
-        window.enter_single_mode()
+        window.enter_single_mode(path)
         window.update_single_progress("生成を準備しています...", 0.0, -1.0)
         pool = QThreadPool.globalInstance()
         pool.start(_Worker(_run_job(path), signals))
