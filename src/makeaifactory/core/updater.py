@@ -1,7 +1,6 @@
 """GitHub release auto-update."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import shutil
@@ -18,18 +17,16 @@ from ..constants import APP_VERSION, GITHUB_REPO
 
 logger = logging.getLogger(__name__)
 
-# We intentionally use a .bat file instead of a .ps1 file for the update
-# script.  On Japanese Windows, PowerShell 5.1 reads .ps1 files as CP932
-# unless a UTF-8 BOM is present, which can silently corrupt the script.
-# Additionally, security software (SmartScreen / Defender) may block
-# unsigned .ps1 files without showing any error.
-#
-# A plain .bat file avoids both problems:
-#   - cmd.exe always reads batch files as the OEM codepage, but our batch
-#     content is pure ASCII so there is no encoding mismatch.
-#   - Batch files are never subject to PowerShell execution policy.
-#   - "start "" "app.exe"" creates a truly independent process that
-#     survives the parent cmd.exe exiting.
+# ── Launch flags ────────────────────────────────────────────────────────────
+# DETACHED_PROCESS (0x08) は console アプリ (cmd.exe) に対して「新しいコンソールを
+# 割り当てろ」という意味になり、CREATE_NO_WINDOW と競合して黒窓が表示される。
+# そのため DETACHED_PROCESS は使わず、代わりに以下を使う:
+#   CREATE_NO_WINDOW      : ウィンドウを作らない
+#   CREATE_NEW_PROCESS_GROUP : 親の Ctrl+C 等を継承しない
+#   CREATE_BREAKAWAY_FROM_JOB: 親の Job Object から離脱 (死活連動を防ぐ)
+# さらに STARTUPINFO.wShowWindow = SW_HIDE で二重に非表示化する。
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+_CREATE_NEW_PROCESS_GROUP  = 0x00000200
 
 
 class ReleaseInfo(NamedTuple):
@@ -93,58 +90,67 @@ async def download_update(
 
 
 def apply_update_and_restart(zip_path: Path) -> None:
-    """Extract zip and hand off file replacement + restart to a .bat script.
+    """ZIP を展開して BAT スクリプトにファイル差し替え+再起動を委譲する。
 
-    All paths used inside the bat file are guaranteed ASCII (exe_dir is
-    validated at install time, _upd_staging is a child of exe_dir).
-    The bat file itself is written as pure ASCII bytes, so cmd.exe reads
-    it correctly regardless of the system codepage.
+    ウィンドウを完全に非表示にするために:
+      - DETACHED_PROCESS は使わない (新コンソール割り当てが起きて窓が出る)
+      - CREATE_NO_WINDOW + STARTUPINFO.wShowWindow=SW_HIDE で二重に非表示化
+      - CREATE_BREAKAWAY_FROM_JOB で親 Job Object から独立
+
+    アプリ起動には start "" ではなく PowerShell Start-Process を使う
+    (より確実にプロセスを起動できる)。
     """
     if not getattr(sys, "frozen", False):
-        logger.warning("Not frozen - skipping update apply")
+        logger.warning("Not frozen — skipping update apply")
         return
 
     exe     = Path(sys.executable)
     exe_dir = exe.parent
     pid     = os.getpid()
 
-    # ── 1. Extract zip to a staging directory inside exe_dir ────────────
+    # ── 1. ZIP 展開 ─────────────────────────────────────────────────────
     extract_dir = exe_dir / "_upd_staging"
     if extract_dir.exists():
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-    logger.info("Extracting zip %s -> %s", zip_path, extract_dir)
+    logger.info("Extracting %s -> %s", zip_path, extract_dir)
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(extract_dir)
-    logger.info("Extraction complete")
 
-    # If the zip had a single top-level subdirectory, unwrap it so that
-    # robocopy copies the actual files, not the subdirectory itself.
     entries = list(extract_dir.iterdir())
-    if len(entries) == 1 and entries[0].is_dir():
-        actual_src = entries[0]
-        logger.info("Unwrapping zip subdirectory: %s", actual_src.name)
-    else:
-        actual_src = extract_dir
+    actual_src = entries[0] if (len(entries) == 1 and entries[0].is_dir()) else extract_dir
+    logger.info("Update source: %s", actual_src)
 
-    # ── 2. Write the updater batch file ─────────────────────────────────
+    # ── 2. BAT ファイル生成 ──────────────────────────────────────────────
     log_path = exe_dir / "_update_debug.log"
     bat_path = exe_dir / "_update.bat"
 
-    # All values substituted here are ASCII (exe_dir guaranteed, pid is int).
+    # PowerShell の Start-Process で EXE を起動する行
+    # BAT 内で %EXE% が展開されてから PS に渡るので、PS は ASCII パスを受け取る
+    ps_launch = (
+        "powershell -NoProfile -NonInteractive -WindowStyle Hidden "
+        '-Command "Start-Process -FilePath \'%EXE%\'"'
+    )
+
     bat_lines = [
         "@echo off",
         f'set "LOG={log_path}"',
         f'set "SRC={actual_src}"',
         f'set "DST={exe_dir}"',
         f'set "EXE={exe}"',
+        f'set "PID_VAL={pid}"',
         "",
-        'echo %TIME% bat started > "%LOG%"',
+        # 起動直後にログ書き込み (これが出れば BAT が実行された証拠)
+        'echo %TIME% updater bat started > "%LOG%"',
+        'echo SRC=%SRC% >> "%LOG%"',
+        'echo DST=%DST% >> "%LOG%"',
+        'echo EXE=%EXE% >> "%LOG%"',
+        'echo PID=%PID_VAL% >> "%LOG%"',
         "",
-        "REM Wait for original process to exit (max 60 sec).",
+        "REM Wait for original process to exit (max 60 sec)",
         "set COUNT=0",
         ":wait_loop",
-        f'tasklist /FI "PID eq {pid}" /NH 2>nul | find /I ".exe" >nul',
+        'tasklist /FI "PID eq %PID_VAL%" /NH 2>nul | find /I ".exe" >nul',
         "if errorlevel 1 goto process_gone",
         "set /A COUNT+=1",
         "if %COUNT% GEQ 60 goto process_gone",
@@ -155,46 +161,66 @@ def apply_update_and_restart(zip_path: Path) -> None:
         'echo %TIME% process gone after %COUNT%s >> "%LOG%"',
         "timeout /t 2 /nobreak >nul",
         "",
-        "REM Verify the staging directory exists.",
+        "REM Verify staging directory",
         'if not exist "%SRC%" (',
         '    echo ERROR: staging dir not found: %SRC% >> "%LOG%"',
         "    exit /b 1",
         ")",
-        'echo %TIME% staging dir ok >> "%LOG%"',
+        'echo %TIME% staging ok, starting robocopy >> "%LOG%"',
         "",
-        "REM Copy updated files over the installation.",
-        'echo %TIME% robocopy start >> "%LOG%"',
+        "REM Copy updated files",
         'robocopy "%SRC%" "%DST%" /E /IS /IT /IM /NFL /NDL /NJH >> "%LOG%" 2>&1',
-        'echo %TIME% robocopy done rc=%ERRORLEVEL% >> "%LOG%"',
+        "set RCEXIT=%ERRORLEVEL%",
+        'echo %TIME% robocopy exit=%RCEXIT% >> "%LOG%"',
         "",
-        "REM Launch the updated application.",
+        "if %RCEXIT% GEQ 8 (",
+        '    echo ERROR: robocopy failed with exit=%RCEXIT% >> "%LOG%"',
+        "    exit /b 1",
+        ")",
+        "",
+        "REM Launch updated app via PowerShell Start-Process",
         'if exist "%EXE%" (',
-        '    echo %TIME% launching %EXE% >> "%LOG%"',
-        '    start "" "%EXE%"',
-        '    echo %TIME% launched ok >> "%LOG%"',
+        f'    echo %TIME% launching %EXE% >> "%LOG%"',
+        f"    {ps_launch}",
+        '    echo %TIME% launch command sent >> "%LOG%"',
         ") else (",
         '    echo ERROR: exe not found after copy: %EXE% >> "%LOG%"',
         ")",
         "",
-        "REM Cleanup staging directory and this batch file.",
         "timeout /t 5 /nobreak >nul",
         'rd /s /q "%SRC%" 2>nul',
+        'echo %TIME% cleanup done >> "%LOG%"',
         'del "%~f0" 2>nul',
     ]
-    bat_content = "\r\n".join(bat_lines) + "\r\n"
 
-    # Write as raw ASCII bytes - cmd.exe reads batch files as the system
-    # OEM codepage, which is a superset of ASCII, so this is always safe.
+    bat_content = "\r\n".join(bat_lines) + "\r\n"
     bat_path.write_bytes(bat_content.encode("ascii"))
     logger.info("BAT written: %s", bat_path)
 
-    # ── 3. Launch the batch file via cmd.exe ────────────────────────────
-    # "cmd /c" exits when the batch finishes, but the "start" inside the
-    # batch creates an independent process, so the new app keeps running.
-    proc = subprocess.Popen(
-        ["cmd.exe", "/c", str(bat_path)],
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
-    )
+    # ── 3. BAT を完全非表示で起動 ────────────────────────────────────────
+    # STARTUPINFO.wShowWindow = SW_HIDE (0) で窓を強制非表示
+    si = subprocess.STARTUPINFO()
+    si.dwFlags = subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0  # SW_HIDE
+
+    # DETACHED_PROCESS は使わない (コンソール再割り当てで黒窓が出る)
+    flags_primary  = subprocess.CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP | _CREATE_BREAKAWAY_FROM_JOB
+    flags_fallback = subprocess.CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
+
+    try:
+        proc = subprocess.Popen(
+            ["cmd.exe", "/c", str(bat_path)],
+            creationflags=flags_primary,
+            startupinfo=si,
+        )
+    except OSError:
+        logger.warning("CREATE_BREAKAWAY_FROM_JOB failed, retrying without it")
+        proc = subprocess.Popen(
+            ["cmd.exe", "/c", str(bat_path)],
+            creationflags=flags_fallback,
+            startupinfo=si,
+        )
+
     logger.info(
         "Update BAT launched (app_pid=%d bat_pid=%d): %s -> %s",
         pid, proc.pid, actual_src, exe_dir,
