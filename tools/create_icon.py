@@ -118,4 +118,4 @@ big = draw_icon(256)
 images = [big.resize((sz, sz), Image.LANCZOS) for sz in SIZES]
 ico_bytes = make_ico(images)
 OUT.write_bytes(ico_bytes)
-print(f"アイコン生成完了: {OUT}  ({len(ico_bytes)/1024:.1f} KB)")
+print(f"Icon generated: {OUT}  ({len(ico_bytes)/1024:.1f} KB)")
