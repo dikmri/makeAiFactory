@@ -31,7 +31,7 @@ from ..domain.progress import (
     SetupProgress,
     SetupState,
 )
-from ..runtime.comfy_installer import install_comfyui, install_torch
+from ..runtime.comfy_installer import install_comfyui, install_sage_attention, install_torch
 from ..runtime.custom_node_installer import install_custom_nodes, verify_required_classes
 from ..runtime.model_installer import (
     check_required_models_present,
@@ -93,6 +93,10 @@ class AppController:
         ]
         return "\n".join(lines)
 
+    @property
+    def sage_attention_available(self) -> bool:
+        return self._state.sage_attention_available
+
     async def setup(self, on_progress: SetupCallback | None = None) -> None:
         paths = self._paths
         paths.ensure_dirs()
@@ -142,6 +146,14 @@ class AppController:
         cn_manifest = self._load_custom_nodes_manifest()
         _progress(SetupState.INSTALLING_CUSTOM_NODES, "custom nodesをインストールしています...")
         await install_custom_nodes(paths.custom_nodes_dir, cn_manifest, paths.venv_dir, uv, paths.downloads_dir)
+
+        _progress(SetupState.INSTALLING_SAGEATTENTION, "高速化モジュールをインストールしています...")
+        sage_ok = await install_sage_attention(
+            paths.venv_dir, uv,
+            rm.sageattn_triton_version, rm.sageattn_wheel_url, rm.sageattn_wheel_sha256,
+            paths.downloads_dir,
+        ) if rm.sageattn_enabled else False
+        self._state.set_sage_attention_available(sage_ok)
 
         model_manifest = self._load_model_manifest()
         installed = self._settings.installed_presets
@@ -223,6 +235,8 @@ class AppController:
             self._job_ctrl = JobController(
                 self._paths, self._server, self._settings, template,
                 gpu_info=gpu_info, ram_total_gb=ram_total,
+                sage_attention_mode=self._load_runtime_manifest().sageattn_mode,
+                sage_attention_available=self._state.sage_attention_available,
             )
         return self._job_ctrl
 

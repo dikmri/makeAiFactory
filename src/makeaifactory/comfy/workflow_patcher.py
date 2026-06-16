@@ -9,6 +9,8 @@ from ..constants import (
     BASE_VIDEO_NODE_ID,
     LOADIMAGE_NODE_ID,
     OUTPUT_VIDEO_NODE_ID,
+    SAGE_ATTN_HIGH_NODE_ID,
+    SAGE_ATTN_LOW_NODE_ID,
     SEED_NODE_ID,
     UNET_HIGH_NODE_ID,
     UNET_LOW_NODE_ID,
@@ -25,6 +27,7 @@ class WorkflowPatchContext:
     seed: int | None
     unet_high_name: str = ""   # node 295: UnetLoaderGGUF 高ノイズ段
     unet_low_name: str  = ""   # node 296: UnetLoaderGGUF 低ノイズ段
+    sage_attention_mode: str = "disabled"   # node 6/7: PathchSageAttentionKJ
 
 
 def patch_workflow(template: dict, ctx: WorkflowPatchContext) -> dict:
@@ -46,6 +49,11 @@ def patch_workflow(template: dict, ctx: WorkflowPatchContext) -> dict:
         wf[UNET_HIGH_NODE_ID]["inputs"]["unet_name"] = ctx.unet_high_name
     if ctx.unet_low_name and UNET_LOW_NODE_ID in wf:
         wf[UNET_LOW_NODE_ID]["inputs"]["unet_name"] = ctx.unet_low_name
+
+    if SAGE_ATTN_HIGH_NODE_ID in wf:
+        wf[SAGE_ATTN_HIGH_NODE_ID]["inputs"]["sage_attention"] = ctx.sage_attention_mode
+    if SAGE_ATTN_LOW_NODE_ID in wf:
+        wf[SAGE_ATTN_LOW_NODE_ID]["inputs"]["sage_attention"] = ctx.sage_attention_mode
 
     logger.debug(
         "workflow patch完了: job=%s image=%s prefix=%s seed=%s",

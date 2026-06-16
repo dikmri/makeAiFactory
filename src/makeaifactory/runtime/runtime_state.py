@@ -46,3 +46,12 @@ class RuntimeState:
     @property
     def is_ready(self) -> bool:
         return self.setup_state == SetupState.READY
+
+    @property
+    def sage_attention_available(self) -> bool:
+        return bool(self._data.get("sage_attention_available", False))
+
+    def set_sage_attention_available(self, available: bool) -> None:
+        self._data["sage_attention_available"] = available
+        self._save()
+        logger.info("RuntimeState: sage_attention_available=%s", available)

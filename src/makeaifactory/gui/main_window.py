@@ -170,6 +170,15 @@ class MainWindow(QMainWindow):
 
         self._vram_mode_callback = None
 
+        settings_menu.addSeparator()
+        self._sage_attention_action = QAction("高速化 (SageAttention) を使う", self)
+        self._sage_attention_action.setCheckable(True)
+        self._sage_attention_action.setChecked(False)
+        self._sage_attention_action.setEnabled(False)
+        self._sage_attention_action.triggered.connect(self._on_sage_attention_toggled)
+        settings_menu.addAction(self._sage_attention_action)
+        self._sage_attention_callback = None
+
         help_menu = menu_bar.addMenu("ヘルプ")
         log_action = QAction("ログを開く", self)
         log_action.triggered.connect(self._open_logs)
@@ -269,6 +278,25 @@ class MainWindow(QMainWindow):
     def _on_vram_mode_selected(self, mode: str) -> None:
         if self._vram_mode_callback:
             self._vram_mode_callback(mode)
+
+    def set_sage_attention_callback(self, cb) -> None:
+        self._sage_attention_callback = cb
+
+    def set_sage_attention_checked(self, checked: bool) -> None:
+        self._sage_attention_action.setChecked(checked)
+
+    def set_sage_attention_available(self, available: bool) -> None:
+        """セットアップ時のインストール結果に応じてメニュー項目の有効/無効を切り替える。"""
+        self._sage_attention_action.setEnabled(available)
+        if not available:
+            self._sage_attention_action.setChecked(False)
+            self._sage_attention_action.setText("高速化 (SageAttention) を使う (この環境では未対応)")
+        else:
+            self._sage_attention_action.setText("高速化 (SageAttention) を使う")
+
+    def _on_sage_attention_toggled(self, checked: bool) -> None:
+        if self._sage_attention_callback:
+            self._sage_attention_callback(checked)
 
     @Slot()
     def _try_paste_image(self) -> None:

@@ -38,6 +38,8 @@ class JobController:
         template: dict,
         gpu_info: "GpuInfo | None" = None,
         ram_total_gb: float = 0.0,
+        sage_attention_mode: str = "",
+        sage_attention_available: bool = False,
     ):
         self._paths = paths
         self._server = server
@@ -45,6 +47,8 @@ class JobController:
         self._template = template
         self._gpu_info = gpu_info
         self._ram_total_gb = ram_total_gb
+        self._sage_attention_mode = sage_attention_mode or "disabled"
+        self._sage_attention_available = sage_attention_available
         self._current_job: Job | None = None
         self._client: ComfyApiClient | None = None
 
@@ -95,6 +99,11 @@ class JobController:
             seed=seed,
             unet_high_name=preset_def["unet_high"],
             unet_low_name=preset_def["unet_low"],
+            sage_attention_mode=(
+                self._sage_attention_mode
+                if self._sage_attention_available and self._settings.sage_attention_enabled
+                else "disabled"
+            ),
         )
         patched = patch_workflow(self._template, ctx)
         job.seed = seed

@@ -200,3 +200,65 @@ async def install_torch(
             f"{result.stderr[-500:]}"
         )
     logger.info("PyTorch検証OK: %s", result.stdout.strip())
+
+
+def _verify_sage_attention(python: Path) -> bool:
+    verify_cmd = [
+        str(python), "-c",
+        "import torch, sageattention; assert torch.cuda.is_available(); print('OK')",
+    ]
+    result = subprocess.run(verify_cmd, capture_output=True, text=True, **_no_window_flags())
+    if result.returncode != 0:
+        logger.warning(
+            "SageAttention import検証失敗。sage_attention=disabledへフォールバックします。\n%s",
+            result.stderr[-500:],
+        )
+        return False
+    logger.info("SageAttention検証OK")
+    return True
+
+
+async def install_sage_attention(
+    venv_path: Path,
+    uv: UvManager,
+    triton_version: str,
+    wheel_url: str,
+    wheel_sha256: str,
+    downloads_dir: Path,
+) -> bool:
+    """SageAttention（高速Attention実装）をインストールする。
+
+    生成速度の最適化のみが目的のオプショナル機能のため、失敗してもSetupErrorは投げない。
+    戻り値Falseの場合、呼び出し側はワークフローのsage_attentionをdisabledのままにする
+    （未対応GPU/インストール失敗時でも生成自体はクラッシュさせず継続できるようにするため）。
+    """
+    if not triton_version or not wheel_url:
+        logger.info("SageAttention未設定（マニフェストに記載なし）。スキップします。")
+        return False
+
+    python = venv_path / "Scripts" / "python.exe"
+    check_cmd = [
+        str(python), "-c",
+        "from importlib.metadata import version; print(version('sageattention'))",
+    ]
+    result = subprocess.run(check_cmd, capture_output=True, text=True, **_no_window_flags())
+    if result.returncode == 0:
+        logger.info("SageAttentionは既にインストール済み: %s", result.stdout.strip())
+        return _verify_sage_attention(python)
+
+    try:
+        logger.info("triton-windows をインストールします (%s)", triton_version)
+        uv.pip_install(venv_path, [f"triton-windows=={triton_version}"])
+
+        from urllib.parse import unquote
+        wheel_filename = unquote(wheel_url.rsplit("/", 1)[-1])
+        wheel_path = downloads_dir / wheel_filename
+        await download_file(wheel_url, wheel_path, sha256=wheel_sha256)
+
+        logger.info("sageattention wheel をインストールします: %s", wheel_filename)
+        uv.pip_install(venv_path, [str(wheel_path)])
+    except Exception as e:
+        logger.warning("SageAttentionインストール失敗（生成速度の最適化のみ無効化されます）: %s", e)
+        return False
+
+    return _verify_sage_attention(python)

@@ -32,6 +32,8 @@ SEED_NODE_ID = "251"
 RESOLUTION_PICKER_NODE_ID = "291"
 UNET_HIGH_NODE_ID = "295"   # UnetLoaderGGUF — 高ノイズ段 (FastMix)
 UNET_LOW_NODE_ID  = "296"   # UnetLoaderGGUF — 低ノイズ段 (LowNoise)
+SAGE_ATTN_HIGH_NODE_ID = "6"   # PathchSageAttentionKJ — 高ノイズ段
+SAGE_ATTN_LOW_NODE_ID  = "7"   # PathchSageAttentionKJ — 低ノイズ段
 
 # ── モデルプリセット ──────────────────────────────────────────────────────────
 # unet_high / unet_low はワークフローのノード 295 / 296 に動的にパッチされる

@@ -14,6 +14,7 @@ _DEFAULTS = {
     "vram_mode": "normal",        # "normal" | "novram"
     "model_preset": "normal",     # "normal" | "lite" | "ultralite"
     "installed_presets": ["normal"],
+    "sage_attention_enabled": False,  # 高速化(SageAttention)。未インストール環境では無視されdisabledのまま
 }
 
 
@@ -94,3 +95,10 @@ class SettingsStore:
         if preset not in presets:
             presets.append(preset)
         self.set("installed_presets", presets)
+
+    @property
+    def sage_attention_enabled(self) -> bool:
+        return bool(self.get("sage_attention_enabled"))
+
+    def set_sage_attention_enabled(self, enabled: bool) -> None:
+        self.set("sage_attention_enabled", enabled)

@@ -78,3 +78,28 @@ def test_original_not_mutated(template):
 def test_make_output_prefix():
     prefix = make_output_prefix("20260614_203015_a1b2c3")
     assert prefix == "makeAiFactory/20260614_203015_a1b2c3/output"
+
+
+def test_sage_attention_defaults_to_disabled(template):
+    ctx = WorkflowPatchContext(
+        job_id="test_job_001",
+        uploaded_image_name="my_image.png",
+        output_prefix="makeAiFactory/test_job_001/output",
+        seed=None,
+    )
+    result = patch_workflow(template, ctx)
+    assert result["6"]["inputs"]["sage_attention"] == "disabled"
+    assert result["7"]["inputs"]["sage_attention"] == "disabled"
+
+
+def test_sage_attention_mode_patched_when_available(template):
+    ctx = WorkflowPatchContext(
+        job_id="test_job_001",
+        uploaded_image_name="my_image.png",
+        output_prefix="makeAiFactory/test_job_001/output",
+        seed=None,
+        sage_attention_mode="sageattn_qk_int8_pv_fp16_cuda",
+    )
+    result = patch_workflow(template, ctx)
+    assert result["6"]["inputs"]["sage_attention"] == "sageattn_qk_int8_pv_fp16_cuda"
+    assert result["7"]["inputs"]["sage_attention"] == "sageattn_qk_int8_pv_fp16_cuda"

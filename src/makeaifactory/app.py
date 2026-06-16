@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 class _AsyncSignals(QObject):
     setup_progress = Signal(SetupProgress)
-    setup_ready    = Signal(str, list, str)  # system_info_text, installed_presets, model_preset
+    setup_ready    = Signal(str, list, str, bool)  # system_info_text, installed_presets, model_preset, sage_attention_available
     job_progress   = Signal(JobProgress)
     job_done       = Signal(Path, str, float, float, float)  # output, stem, elapsed, vram_peak, vram_avg
     batch_progress      = Signal(str, float, float, float, str)  # message, all_pct, image_pct, task_pct, detail
@@ -152,6 +152,11 @@ def run_app() -> int:
     window.set_preset_change_callback(_on_preset_change)
     window.set_preset_add_callback(lambda: _trigger_preset_install(ctrl, window, paths, settings))
 
+    def _on_sage_attention_toggle(checked: bool) -> None:
+        settings.set_sage_attention_enabled(checked)
+
+    window.set_sage_attention_callback(_on_sage_attention_toggle)
+
     signals = _AsyncSignals()
 
     # バッチキャンセル用フラグ（スレッドセーフ）
@@ -173,10 +178,12 @@ def run_app() -> int:
             if pct == 0:
                 window.show_progress_indeterminate(p.message)
 
-    @Slot(str, list, str)
-    def _on_setup_ready(system_info: str, installed_presets: list, model_preset: str) -> None:
+    @Slot(str, list, str, bool)
+    def _on_setup_ready(system_info: str, installed_presets: list, model_preset: str, sage_attention_available: bool) -> None:
         window.set_system_info(system_info)
         window.update_preset_menu(installed_presets, model_preset)
+        window.set_sage_attention_available(sage_attention_available)
+        window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
@@ -281,7 +288,10 @@ def run_app() -> int:
             signals.setup_progress.emit(p)
         try:
             await ctrl.ensure_ready(on_progress=_cb)
-            signals.setup_ready.emit(ctrl.get_system_info_text(), settings.installed_presets, settings.model_preset)
+            signals.setup_ready.emit(
+                ctrl.get_system_info_text(), settings.installed_presets, settings.model_preset,
+                ctrl.sage_attention_available,
+            )
             signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message="準備完了"))
         except SystemUnsupportedError as e:
             signals.error.emit("対応環境外", str(e), "", False)

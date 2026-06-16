@@ -61,10 +61,16 @@ class RuntimeManifest:
     torchaudio_version: str
     torch_cuda_variant: str
     torch_index_url: str
+    sageattn_enabled: bool = False
+    sageattn_triton_version: str = ""
+    sageattn_wheel_url: str = ""
+    sageattn_wheel_sha256: str = ""
+    sageattn_mode: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "RuntimeManifest":
         torch_block = d["torch"]
+        sage_block = d.get("sageattention", {})
         return cls(
             schema_version=d["schema_version"],
             python_version=d["python"]["version"],
@@ -79,6 +85,11 @@ class RuntimeManifest:
             torchaudio_version=torch_block.get("torchaudio_version", torch_block["version"]),
             torch_cuda_variant=torch_block["cuda_variant"],
             torch_index_url=torch_block["install_index_url"],
+            sageattn_enabled=sage_block.get("enabled", False),
+            sageattn_triton_version=sage_block.get("triton_windows_version", ""),
+            sageattn_wheel_url=sage_block.get("wheel_url", ""),
+            sageattn_wheel_sha256=sage_block.get("sha256", ""),
+            sageattn_mode=sage_block.get("attention_mode", ""),
         )
 
 
