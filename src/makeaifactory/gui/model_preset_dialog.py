@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -22,7 +23,13 @@ def _fmt_gb(byte_count: int) -> str:
 
 
 class ModelPresetDialog(QDialog):
-    """インストール済みではないプリセットを選択してDLするダイアログ。"""
+    """インストール済みではないプリセットを選択してDLするダイアログ。
+
+    「インストール開始」ボタンは install_requested シグナルを emit するだけで
+    ダイアログを閉じない。進捗は show_progress() / mark_done() で更新する。
+    """
+
+    install_requested = Signal(list)  # 選択されたプリセットキーのリストを emit
 
     def __init__(
         self,
@@ -73,7 +80,10 @@ class ModelPresetDialog(QDialog):
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setVisible(False)
-        self._progress.setStyleSheet("QProgressBar { background:#111; border:1px solid #333; border-radius:4px; height:14px; } QProgressBar::chunk { background:#4fc3f7; border-radius:3px; }")
+        self._progress.setStyleSheet(
+            "QProgressBar { background:#111; border:1px solid #333; border-radius:4px; height:14px; }"
+            "QProgressBar::chunk { background:#4fc3f7; border-radius:3px; }"
+        )
         layout.addWidget(self._progress)
 
         self._status_lbl = QLabel("")
@@ -81,19 +91,32 @@ class ModelPresetDialog(QDialog):
         self._status_lbl.setVisible(False)
         layout.addWidget(self._status_lbl)
 
-        self._btn_box = QDialogButtonBox()
-        self._install_btn = self._btn_box.addButton(
-            "インストール開始", QDialogButtonBox.ButtonRole.AcceptRole
-        )
+        # ボタン行: install_btn はシグナルを emit するだけ。close_btn が唯一の閉じるボタン。
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        self._close_btn = QPushButton("キャンセル")
+        self._close_btn.setStyleSheet("padding: 10px 24px;")
+        self._close_btn.clicked.connect(self.reject)
+        btn_row.addWidget(self._close_btn)
+
+        self._install_btn = QPushButton("インストール開始")
         self._install_btn.setStyleSheet(
             "padding: 10px 24px; background: #1565c0; color: white; border: none; border-radius: 4px;"
         )
         self._install_btn.setEnabled(bool(uninstalled))
-        cancel_btn = self._btn_box.addButton("キャンセル", QDialogButtonBox.ButtonRole.RejectRole)
-        cancel_btn.setStyleSheet("padding: 10px 24px;")
-        self._btn_box.accepted.connect(self.accept)
-        self._btn_box.rejected.connect(self.reject)
-        layout.addWidget(self._btn_box)
+        self._install_btn.clicked.connect(self._on_install_clicked)
+        btn_row.addWidget(self._install_btn)
+
+        layout.addLayout(btn_row)
+
+    def _on_install_clicked(self) -> None:
+        presets = self.selected_presets
+        if not presets:
+            return
+        self._install_btn.setEnabled(False)
+        self._close_btn.setEnabled(False)
+        self.install_requested.emit(presets)
 
     @property
     def selected_presets(self) -> list[str]:
@@ -104,12 +127,10 @@ class ModelPresetDialog(QDialog):
         self._status_lbl.setVisible(True)
         self._progress.setValue(int(pct))
         self._status_lbl.setText(message)
-        self._install_btn.setEnabled(False)
 
     def mark_done(self) -> None:
         self._progress.setValue(100)
         self._status_lbl.setText("インストール完了！")
         self._install_btn.setEnabled(False)
-        cancel_btn = self._btn_box.button(QDialogButtonBox.StandardButton.Cancel)
-        if cancel_btn:
-            cancel_btn.setText("閉じる")
+        self._close_btn.setText("閉じる")
+        self._close_btn.setEnabled(True)

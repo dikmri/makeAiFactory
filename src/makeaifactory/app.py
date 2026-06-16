@@ -413,52 +413,48 @@ def _trigger_preset_install(ctrl: AppController, window: MainWindow, paths: AppP
         installed_presets=settings.installed_presets,
         parent=window,
     )
-    if dlg.exec() != ModelPresetDialog.DialogCode.Accepted:
-        return
 
-    presets_to_install = dlg.selected_presets
-    if not presets_to_install:
-        return
+    # install_requested シグナルが来たらワーカーを起動する。
+    # dlg.exec() はダイアログが閉じるまでブロックするが、その間も QueuedConnection で
+    # ワーカースレッドからのシグナルを処理できるため、進捗表示が機能する。
+    def _start_install(presets: list[str]) -> None:
+        inst_signals = _AsyncSignals()
 
-    signals = _AsyncSignals()
+        def _on_progress(p: SetupProgress) -> None:
+            dlg.show_progress(p.message, p.percent)
 
-    @Slot(SetupProgress)
-    def _on_install_progress(p: SetupProgress) -> None:
-        dlg.show_progress(p.message, p.percent)
+        def _on_done(p: SetupProgress) -> None:
+            if p.state == SetupState.READY:
+                dlg.mark_done()
+                window.update_preset_menu(settings.installed_presets, settings.model_preset)
 
-    signals.setup_progress.connect(_on_install_progress, Qt.ConnectionType.QueuedConnection)
+        def _on_error(title: str, msg: str, detail: str, show_repair: bool) -> None:
+            dlg.reject()
+            window.show_error(title, msg, detail, False)
 
-    @Slot(str, str, str, bool)
-    def _on_install_error(title: str, msg: str, detail: str, show_repair: bool) -> None:
-        dlg.close()
-        window.show_error(title, msg, detail, False)
+        inst_signals.setup_progress.connect(_on_progress, Qt.ConnectionType.QueuedConnection)
+        inst_signals.setup_progress.connect(_on_done,     Qt.ConnectionType.QueuedConnection)
+        inst_signals.error.connect(_on_error,             Qt.ConnectionType.QueuedConnection)
 
-    signals.error.connect(_on_install_error, Qt.ConnectionType.QueuedConnection)
+        async def _do_install() -> None:
+            for preset in presets:
+                try:
+                    def _cb(p: SetupProgress, s=inst_signals) -> None:
+                        s.setup_progress.emit(p)
+                    await ctrl.install_preset(preset, on_progress=_cb)
+                except Exception as e:
+                    logger.exception("プリセットインストールエラー: %s", preset)
+                    inst_signals.error.emit("インストール失敗", str(e), "", False)
+                    return
+            inst_signals.setup_progress.emit(SetupProgress(
+                state=SetupState.READY, message="インストール完了", percent=100
+            ))
 
-    async def _do_install() -> None:
-        for preset in presets_to_install:
-            try:
-                def _cb(p: SetupProgress) -> None:
-                    signals.setup_progress.emit(p)
-                await ctrl.install_preset(preset, on_progress=_cb)
-            except Exception as e:
-                logger.exception("プリセットインストールエラー: %s", preset)
-                signals.error.emit("インストール失敗", str(e), "", False)
-                return
-        signals.setup_progress.emit(SetupProgress(
-            state=SetupState.READY, message="インストール完了", percent=100
-        ))
+        pool = QThreadPool.globalInstance()
+        pool.start(_Worker(_do_install(), inst_signals))
 
-    @Slot(SetupProgress)
-    def _on_done(p: SetupProgress) -> None:
-        if p.state == SetupState.READY:
-            dlg.mark_done()
-            window.update_preset_menu(settings.installed_presets, settings.model_preset)
-
-    signals.setup_progress.connect(_on_done, Qt.ConnectionType.QueuedConnection)
-
-    pool = QThreadPool.globalInstance()
-    pool.start(_Worker(_do_install(), signals))
+    dlg.install_requested.connect(_start_install)
+    dlg.exec()
 
 
 def _trigger_repair(ctrl: AppController, window: MainWindow, paths: AppPaths, settings: SettingsStore) -> None:
