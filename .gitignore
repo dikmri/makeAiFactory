@@ -31,6 +31,7 @@ makeAiFactory_install.json
 
 # 開発素材・ワークフロー原本（デプロイ不要）
 dev/
+logs/
 
 # Pillow/画像テスト
 tools/__pycache__/
