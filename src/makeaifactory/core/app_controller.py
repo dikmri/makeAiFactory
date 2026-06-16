@@ -95,7 +95,9 @@ class AppController:
 
     @property
     def sage_attention_available(self) -> bool:
-        return self._state.sage_attention_available
+        # manifestのenabledを常に正とする。過去にインストール確認済みでも
+        # manifest側でenabled=falseにした時点で即座にGUI表示にも反映する。
+        return self._state.sage_attention_available and self._load_runtime_manifest().sageattn_enabled
 
     async def _ensure_sage_attention_installed(self, on_progress: SetupCallback | None = None) -> None:
         """SageAttentionの導入確認/インストールを一度だけ行う。
@@ -258,11 +260,15 @@ class AppController:
             assert self._server is not None
             gpu_info    = self._system_info.primary_gpu if self._system_info else None
             ram_total   = self._system_info.ram_gb      if self._system_info else 0.0
+            rm = self._load_runtime_manifest()
             self._job_ctrl = JobController(
                 self._paths, self._server, self._settings, template,
                 gpu_info=gpu_info, ram_total_gb=ram_total,
-                sage_attention_mode=self._load_runtime_manifest().sageattn_mode,
-                sage_attention_available=self._state.sage_attention_available,
+                sage_attention_mode=rm.sageattn_mode,
+                # manifestのenabledを常に正とする。過去にインストール確認済みで
+                # sage_attention_available=Trueがキャッシュされていても、
+                # manifest側でenabled=falseにした時点(危険判明時など)で即座に無効化する。
+                sage_attention_available=self._state.sage_attention_available and rm.sageattn_enabled,
             )
         return self._job_ctrl
 

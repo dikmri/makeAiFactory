@@ -30,11 +30,11 @@
     "_note": "RTX 5060 Ti (Blackwell sm_120) requires CUDA 12.8+. cu124 causes 'no kernel image available' error"
   },
   "sageattention": {
-    "enabled": true,
+    "enabled": false,
     "triton_windows_version": "3.4.0.post21",
     "wheel_url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post3/sageattention-2.2.0%2Bcu128torch2.8.0.post3-cp39-abi3-win_amd64.whl",
     "sha256": "7dabcd00e63229b28f046c5a69ec37cf4756afb375dbadd1975dadec045ae21c",
     "attention_mode": "sageattn_qk_int8_pv_fp16_cuda",
-    "_note": "torch==2.8.0+cu128専用ビルド (woct0rdho/SageAttention v2.2.0-windows.post3)。CUDA>=12.8でsm120(Blackwell)カーネルを内蔵。Wan系モデルはauto/汎用モードだと黒画面/ノイズ出力になり得るため、上流README推奨のsageattn_qk_int8_pv_fp16_cudaを使用。triton-windowsは前提パッケージとして先にインストールする。インストールまたはimport検証に失敗した場合はsage_attention=disabledへ自動フォールバックする(workflow_patcher.py)。"
+    "_note": "2026-06-16: 実機(RTX 5060 Ti, Blackwell sm120)でWan2.2 I2V実生成中にsageattn_qk_int8_pv_fp16_cudaカーネル使用時、ComfyUIサーバーがネイティブクラッシュ(Windows fatal exception 0x80000003, KJNodes model_optimization_nodes.py sage_func内)することを実ログで確認したためenabledをfalseに戻した。import検証(_verify_sage_attention)は通るが実際の推論カーネル実行時にのみ落ちるため、静的検証だけでは検知不可。post4/post5ウィールはtorch>=2.9.0/2.10.0必須でmakeAiFactoryのtorch==2.8.0+cu128ピンと不一致のため単純差し替え不可。再度enabledにする前に実機での実生成テストが必須。"
   }
 }
