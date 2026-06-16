@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 class _AsyncSignals(QObject):
     setup_progress = Signal(SetupProgress)
+    setup_ready    = Signal(str, list, str)  # system_info_text, installed_presets, model_preset
     job_progress   = Signal(JobProgress)
     job_done       = Signal(Path, str, float, float, float)  # output, stem, elapsed, vram_peak, vram_avg
     batch_progress      = Signal(str, float, float, float, str)  # message, all_pct, image_pct, task_pct, detail
@@ -172,6 +173,11 @@ def run_app() -> int:
             if pct == 0:
                 window.show_progress_indeterminate(p.message)
 
+    @Slot(str, list, str)
+    def _on_setup_ready(system_info: str, installed_presets: list, model_preset: str) -> None:
+        window.set_system_info(system_info)
+        window.update_preset_menu(installed_presets, model_preset)
+
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
         window.update_single_progress(
@@ -218,6 +224,7 @@ def run_app() -> int:
         window.show_error(title, msg, detail, show_repair)
 
     signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
+    signals.setup_ready.connect(_on_setup_ready,                Qt.ConnectionType.QueuedConnection)
     signals.job_progress.connect(_on_job_progress,              Qt.ConnectionType.QueuedConnection)
     signals.job_done.connect(_on_job_done,                      Qt.ConnectionType.QueuedConnection)
     signals.batch_progress.connect(_on_batch_progress,          Qt.ConnectionType.QueuedConnection)
@@ -274,8 +281,7 @@ def run_app() -> int:
             signals.setup_progress.emit(p)
         try:
             await ctrl.ensure_ready(on_progress=_cb)
-            window.set_system_info(ctrl.get_system_info_text())
-            window.update_preset_menu(settings.installed_presets, settings.model_preset)
+            signals.setup_ready.emit(ctrl.get_system_info_text(), settings.installed_presets, settings.model_preset)
             signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message="準備完了"))
         except SystemUnsupportedError as e:
             signals.error.emit("対応環境外", str(e), "", False)
