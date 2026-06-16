@@ -90,8 +90,8 @@ jobs:
 
             ### 動作環境
             - Windows 10 / 11 (64bit)
-            - NVIDIA GPU (VRAM 12GB 以上推奨)
-            - 約 45 GB の空き容量
+            - NVIDIA GPU (VRAM 8GB以上、16GB以上推奨)
+            - 約 55 GB 以上の空き容量
 
             > 初回セットアップ時に ComfyUI・Wan2.2 モデル等がダウンロードされます。
           files: makeAiFactory-${{ github.ref_name }}-windows.zip

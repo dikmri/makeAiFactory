@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFilter
 
 SIZES = [16, 32, 48, 64, 128, 256]
 OUT = Path(__file__).parent.parent / "assets" / "icon.ico"
+PNG_OUT = Path(__file__).parent.parent / "assets" / "icon.png"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 BG      = (15,  15,  26)   # #0f0f1a
@@ -119,3 +120,6 @@ images = [big.resize((sz, sz), Image.LANCZOS) for sz in SIZES]
 ico_bytes = make_ico(images)
 OUT.write_bytes(ico_bytes)
 print(f"Icon generated: {OUT}  ({len(ico_bytes)/1024:.1f} KB)")
+
+big.save(PNG_OUT)
+print(f"PNG generated: {PNG_OUT}")
