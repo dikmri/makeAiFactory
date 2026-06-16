@@ -30,11 +30,11 @@
     "_note": "RTX 5060 Ti (Blackwell sm_120) requires CUDA 12.8+. cu124 causes 'no kernel image available' error"
   },
   "sageattention": {
-    "enabled": false,
+    "enabled": true,
     "triton_windows_version": "3.4.0.post21",
     "wheel_url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post3/sageattention-2.2.0%2Bcu128torch2.8.0.post3-cp39-abi3-win_amd64.whl",
     "sha256": "7dabcd00e63229b28f046c5a69ec37cf4756afb375dbadd1975dadec045ae21c",
-    "attention_mode": "sageattn_qk_int8_pv_fp16_cuda",
-    "_note": "2026-06-16: 実機(RTX 5060 Ti, Blackwell sm120)でWan2.2 I2V実生成中にsageattn_qk_int8_pv_fp16_cudaカーネル使用時、ComfyUIサーバーがネイティブクラッシュ(Windows fatal exception 0x80000003, KJNodes model_optimization_nodes.py sage_func内)することを実ログで確認したためenabledをfalseに戻した。import検証(_verify_sage_attention)は通るが実際の推論カーネル実行時にのみ落ちるため、静的検証だけでは検知不可。post4/post5ウィールはtorch>=2.9.0/2.10.0必須でmakeAiFactoryのtorch==2.8.0+cu128ピンと不一致のため単純差し替え不可。再度enabledにする前に実機での実生成テストが必須。"
+    "attention_mode": "auto",
+    "_note": "2026-06-16: sageattn_qk_int8_pv_fp16_cuda指定でRTX 5060 Ti(Blackwell sm120)上でComfyUIがネイティブクラッシュ(Windows fatal exception 0x80000003)する件を実ログで確認し、一度enabled=falseに戻した。その後、バンドル中のv2.2.0-windows.post3ホイール自身のsageattention/core.py(汎用ディスパッチャsageattn())を直接確認した結果、sm120はsageattn_qk_int8_pv_fp8_cuda(qk_quant_gran='per_warp', pv_accum_dtype='fp32+fp16')に振り分ける設計であり、sageattn_qk_int8_pv_fp16_cudaはsm120向けに一度も想定されていない組み合わせだったと判明。attention_modeを'auto'に変更することでtorch/wheelの更新なしに正しいカーネルへ自動振り分けされる。ユーザー自身の別環境(StabilityMatrix, --use-sage-attention=autoモード, 同じRTX 5060 Ti)でWan2.2 I2V GGUFの実生成がクラッシュなく完走した実ログでも裏付け済み。再度有効化するにあたり実機での実生成テストを実施中。"
   }
 }
