@@ -217,6 +217,12 @@ def run_app() -> int:
 
     window.set_sage_attention_callback(_on_sage_attention_toggle)
 
+    def _on_always_on_top_toggle(checked: bool) -> None:
+        settings.set_always_on_top(checked)
+
+    window.set_always_on_top_callback(_on_always_on_top_toggle)
+    window.set_always_on_top(settings.always_on_top)
+
     signals = _AsyncSignals()
 
     # バッチキャンセル用フラグ（スレッドセーフ）

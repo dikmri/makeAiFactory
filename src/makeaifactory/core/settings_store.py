@@ -20,6 +20,7 @@ _DEFAULTS = {
     "se_enabled": True,            # 完成通知音のON/OFF (マスタースイッチ)
     "se_volume": 75,                # 完成通知音の音量 (0-100)
     "se_on_batch_complete": True,   # フォルダ(バッチ)生成完了時にも通知音を鳴らすか
+    "always_on_top": False,         # ウィンドウを常に最前面に表示するか
 }
 
 
@@ -143,3 +144,10 @@ class SettingsStore:
 
     def set_se_on_batch_complete(self, enabled: bool) -> None:
         self.set("se_on_batch_complete", enabled)
+
+    @property
+    def always_on_top(self) -> bool:
+        return bool(self.get("always_on_top"))
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        self.set("always_on_top", enabled)

@@ -154,6 +154,13 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(self._auto_save_enabled_action)
         self._auto_save_toggle_cb = None
 
+        self._always_on_top_action = QAction("常に最前面に表示", self)
+        self._always_on_top_action.setCheckable(True)
+        self._always_on_top_action.setChecked(False)
+        self._always_on_top_action.triggered.connect(self._on_always_on_top_toggled)
+        settings_menu.addAction(self._always_on_top_action)
+        self._always_on_top_callback = None
+
         settings_menu.addSeparator()
         self._preset_menu = settings_menu.addMenu("モデルプリセット")
         self._preset_group = QActionGroup(self)
@@ -278,6 +285,29 @@ class MainWindow(QMainWindow):
     def _on_auto_save_toggled(self, checked: bool) -> None:
         if self._auto_save_toggle_cb:
             self._auto_save_toggle_cb(checked)
+
+    def set_always_on_top_callback(self, cb) -> None:
+        self._always_on_top_callback = cb
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        """設定値をメニューとウィンドウの両方に反映する (起動時の初期反映用)。"""
+        self._always_on_top_action.setChecked(enabled)
+        self._apply_always_on_top(enabled)
+
+    def _apply_always_on_top(self, enabled: bool) -> None:
+        # setWindowFlag は呼んだ時点で isVisible() を即座に False にするため、
+        # 判定は呼ぶ前の表示状態でキャプチャしておく必要がある。
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
+        # ネイティブウィンドウが再生成されるため、表示中だった場合のみ show() し直す。
+        # 起動シーケンス中 (まだ未表示) に呼ばれた場合はここで先に表示してしまわないようにする。
+        if was_visible:
+            self.show()
+
+    def _on_always_on_top_toggled(self, checked: bool) -> None:
+        self._apply_always_on_top(checked)
+        if self._always_on_top_callback:
+            self._always_on_top_callback(checked)
 
     def set_se_enabled_callback(self, cb) -> None:
         self._se_enabled_callback = cb
