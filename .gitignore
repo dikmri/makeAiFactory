@@ -35,3 +35,15 @@ logs/
 
 # Pillow/画像テスト
 tools/__pycache__/
+
+# リリースビルド成果物（GitHub Releasesにアップロードするのみ、git管理不要）
+/makeAiFactory-*-windows.zip
+
+# ルート直下に紛れ込んだベンチマーク出力（正本は logs/benchmark.csv）
+/benchmark.csv
+
+# 個人用設計メモ（git管理不要）
+/makeAiFactory_detail_design.md
+
+# pytest キャッシュ
+.pytest_cache/
