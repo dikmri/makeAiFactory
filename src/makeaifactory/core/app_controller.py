@@ -153,12 +153,13 @@ class AppController:
             raise
         _progress(SetupState.DOWNLOADING_MODELS, "モデルをダウンロードしています（時間がかかります）...")
 
-        def _model_progress(name: str, done: int, total: int) -> None:
+        def _model_progress(name: str, done: int, total: int, file_idx: int = 0, total_files: int = 0) -> None:
             pct = done / total * 100 if total > 0 else 0
             if on_progress:
+                msg = f"モデルDL中 ({file_idx}/{total_files}): {name}" if total_files else f"モデルDL中: {name}"
                 on_progress(SetupProgress(
                     state=SetupState.DOWNLOADING_MODELS,
-                    message=f"モデルDL中: {name}",
+                    message=msg,
                     percent=pct,
                 ))
 
@@ -225,40 +226,46 @@ class AppController:
             )
         return self._job_ctrl
 
-    async def install_preset(
+    async def install_presets(
         self,
-        preset: str,
+        presets: list[str],
         on_progress: SetupCallback | None = None,
     ) -> None:
-        """インストール済み後に追加プリセットのモデルをDLする。"""
+        """インストール済み後に追加プリセット群のモデルをまとめてDLする。
+
+        複数プリセットを同時に渡すと共有モデルは重複DLされず、
+        全体進捗 (overall_percent) はそれらを合算した総ファイル数を基準に算出される。
+        """
         from ..constants import _VALID_PRESETS
-        if preset not in _VALID_PRESETS:
-            raise ValueError(f"不正なプリセット: {preset}")
+        for preset in presets:
+            if preset not in _VALID_PRESETS:
+                raise ValueError(f"不正なプリセット: {preset}")
 
         paths = self._paths
         model_manifest = self._load_model_manifest()
 
-        def _progress(msg: str, pct: float = 0.0) -> None:
-            if on_progress:
-                on_progress(SetupProgress(
-                    state=SetupState.DOWNLOADING_MODELS,
-                    message=msg,
-                    percent=pct,
-                ))
-
         from ..runtime.model_installer import check_disk_space, install_models, check_required_models_present
-        try:
-            check_disk_space(paths.runtime_root, model_manifest, presets=[preset])
-        except DiskSpaceError:
-            raise
+        check_disk_space(paths.runtime_root, model_manifest, presets=presets)
 
-        def _model_progress(name: str, done: int, total: int) -> None:
-            pct = done / total * 100 if total > 0 else 0
-            _progress(f"モデルDL中: {name}", pct)
+        def _model_progress(name: str, done: int, total: int, file_idx: int, total_files: int) -> None:
+            if not on_progress:
+                return
+            file_pct = done / total * 100 if total > 0 else 0
+            overall_pct = (
+                ((file_idx - 1) + done / total) / total_files * 100
+                if total_files > 0 and total > 0 else 0
+            )
+            on_progress(SetupProgress(
+                state=SetupState.DOWNLOADING_MODELS,
+                message=f"モデルDL中 ({file_idx}/{total_files}): {name}",
+                percent=file_pct,
+                overall_percent=overall_pct,
+            ))
 
-        await install_models(paths.runtime_root, model_manifest, presets=[preset], progress_cb=_model_progress)
-        check_required_models_present(paths.runtime_root, model_manifest, presets=[preset])
-        self._settings.add_installed_preset(preset)
+        await install_models(paths.runtime_root, model_manifest, presets=presets, progress_cb=_model_progress)
+        check_required_models_present(paths.runtime_root, model_manifest, presets=presets)
+        for preset in presets:
+            self._settings.add_installed_preset(preset)
 
     def stop_server(self) -> None:
         if self._server:

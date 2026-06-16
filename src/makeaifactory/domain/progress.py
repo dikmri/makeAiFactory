@@ -37,6 +37,7 @@ class SetupProgress:
     message: str = ""
     detail: str = ""
     percent: float = 0.0
+    overall_percent: float = 0.0  # 複数ファイルDL時の全体進捗 (該当しない場合は0)
 
 
 @dataclass

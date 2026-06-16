@@ -421,7 +421,7 @@ def _trigger_preset_install(ctrl: AppController, window: MainWindow, paths: AppP
         inst_signals = _AsyncSignals()
 
         def _on_progress(p: SetupProgress) -> None:
-            dlg.show_progress(p.message, p.percent)
+            dlg.show_progress(p.message, p.percent, p.overall_percent)
 
         def _on_done(p: SetupProgress) -> None:
             if p.state == SetupState.READY:
@@ -437,17 +437,16 @@ def _trigger_preset_install(ctrl: AppController, window: MainWindow, paths: AppP
         inst_signals.error.connect(_on_error,             Qt.ConnectionType.QueuedConnection)
 
         async def _do_install() -> None:
-            for preset in presets:
-                try:
-                    def _cb(p: SetupProgress, s=inst_signals) -> None:
-                        s.setup_progress.emit(p)
-                    await ctrl.install_preset(preset, on_progress=_cb)
-                except Exception as e:
-                    logger.exception("プリセットインストールエラー: %s", preset)
-                    inst_signals.error.emit("インストール失敗", str(e), "", False)
-                    return
+            try:
+                def _cb(p: SetupProgress, s=inst_signals) -> None:
+                    s.setup_progress.emit(p)
+                await ctrl.install_presets(presets, on_progress=_cb)
+            except Exception as e:
+                logger.exception("プリセットインストールエラー: %s", presets)
+                inst_signals.error.emit("インストール失敗", str(e), "", False)
+                return
             inst_signals.setup_progress.emit(SetupProgress(
-                state=SetupState.READY, message="インストール完了", percent=100
+                state=SetupState.READY, message="インストール完了", percent=100, overall_percent=100
             ))
 
         pool = QThreadPool.globalInstance()

@@ -12,7 +12,7 @@ from .hash_verifier import verify_sha256
 
 logger = logging.getLogger(__name__)
 
-ProgressCallback = Callable[[str, int, int], None]
+ProgressCallback = Callable[[str, int, int, int, int], None]  # name, downloaded, total, file_index, total_files
 
 
 def _needed_models(manifest: ModelManifest, presets: list[str]) -> list[ModelEntry]:
@@ -87,6 +87,8 @@ async def install_models(
 ) -> None:
     if presets is None:
         presets = ["normal"]
+
+    to_download: list[ModelEntry] = []
     for model in _needed_models(manifest, presets):
         if not model.required:
             continue
@@ -107,11 +109,15 @@ async def install_models(
             logger.warning("DL不可モデル (source_url未設定): %s", model.name)
             continue
 
+        to_download.append(model)
+
+    total_files = len(to_download)
+    for idx, model in enumerate(to_download, start=1):
         logger.info("モデルDL開始: %s", model.name)
 
-        def _cb(downloaded: int, total: int, name: str = model.name) -> None:
+        def _cb(downloaded: int, total: int, name: str = model.name, idx: int = idx, total_files: int = total_files) -> None:
             if progress_cb:
-                progress_cb(name, downloaded, total)
+                progress_cb(name, downloaded, total, idx, total_files)
 
         await download_file(
             model.source_url,

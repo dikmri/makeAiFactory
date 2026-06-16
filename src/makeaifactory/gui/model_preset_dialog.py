@@ -17,6 +17,21 @@ from PySide6.QtWidgets import (
 
 from ..constants import MODEL_PRESETS
 
+_BAR_BLUE = """
+    QProgressBar {
+        background:#111; border:1px solid #333; border-radius:4px;
+        height:16px; text-align:center; color:#ccc; font-size:11px;
+    }
+    QProgressBar::chunk { background:#4fc3f7; border-radius:3px; }
+"""
+_BAR_AMBER = """
+    QProgressBar {
+        background:#111; border:1px solid #333; border-radius:4px;
+        height:16px; text-align:center; color:#ccc; font-size:11px;
+    }
+    QProgressBar::chunk { background:#ffa726; border-radius:3px; }
+"""
+
 
 def _fmt_gb(byte_count: int) -> str:
     return f"{byte_count / (1024 ** 3):.1f} GB"
@@ -76,15 +91,29 @@ class ModelPresetDialog(QDialog):
                 layout.addLayout(row)
                 self._checks[key] = cb
 
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 100)
-        self._progress.setValue(0)
-        self._progress.setVisible(False)
-        self._progress.setStyleSheet(
-            "QProgressBar { background:#111; border:1px solid #333; border-radius:4px; height:14px; }"
-            "QProgressBar::chunk { background:#4fc3f7; border-radius:3px; }"
-        )
-        layout.addWidget(self._progress)
+        self._overall_lbl = QLabel("全体進捗")
+        self._overall_lbl.setStyleSheet("color: #4fc3f7; font-size: 11px;")
+        self._overall_lbl.setVisible(False)
+        layout.addWidget(self._overall_lbl)
+
+        self._overall_bar = QProgressBar()
+        self._overall_bar.setRange(0, 100)
+        self._overall_bar.setValue(0)
+        self._overall_bar.setVisible(False)
+        self._overall_bar.setStyleSheet(_BAR_BLUE)
+        layout.addWidget(self._overall_bar)
+
+        self._file_lbl = QLabel("現在のファイル")
+        self._file_lbl.setStyleSheet("color: #ffa726; font-size: 11px;")
+        self._file_lbl.setVisible(False)
+        layout.addWidget(self._file_lbl)
+
+        self._file_bar = QProgressBar()
+        self._file_bar.setRange(0, 100)
+        self._file_bar.setValue(0)
+        self._file_bar.setVisible(False)
+        self._file_bar.setStyleSheet(_BAR_AMBER)
+        layout.addWidget(self._file_bar)
 
         self._status_lbl = QLabel("")
         self._status_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
@@ -122,14 +151,16 @@ class ModelPresetDialog(QDialog):
     def selected_presets(self) -> list[str]:
         return [k for k, cb in self._checks.items() if cb.isChecked()]
 
-    def show_progress(self, message: str, pct: float) -> None:
-        self._progress.setVisible(True)
-        self._status_lbl.setVisible(True)
-        self._progress.setValue(int(pct))
+    def show_progress(self, message: str, file_pct: float, overall_pct: float) -> None:
+        for w in (self._overall_lbl, self._overall_bar, self._file_lbl, self._file_bar, self._status_lbl):
+            w.setVisible(True)
+        self._overall_bar.setValue(int(overall_pct))
+        self._file_bar.setValue(int(file_pct))
         self._status_lbl.setText(message)
 
     def mark_done(self) -> None:
-        self._progress.setValue(100)
+        self._overall_bar.setValue(100)
+        self._file_bar.setValue(100)
         self._status_lbl.setText("インストール完了！")
         self._install_btn.setEnabled(False)
         self._close_btn.setText("閉じる")
