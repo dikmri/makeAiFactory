@@ -15,6 +15,7 @@ _DEFAULTS = {
     "model_preset": "normal",     # "normal" | "lite" | "ultralite"
     "installed_presets": ["normal"],
     "sage_attention_enabled": False,  # 高速化(SageAttention)。未インストール環境では無視されdisabledのまま
+    "auto_save_folder": "",       # 動画完成時の自動保存先。空文字列 = 無効
 }
 
 
@@ -102,3 +103,10 @@ class SettingsStore:
 
     def set_sage_attention_enabled(self, enabled: bool) -> None:
         self.set("sage_attention_enabled", enabled)
+
+    @property
+    def auto_save_folder(self) -> str:
+        return str(self.get("auto_save_folder") or "")
+
+    def set_auto_save_folder(self, folder: str) -> None:
+        self.set("auto_save_folder", folder)

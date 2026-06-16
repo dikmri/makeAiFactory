@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
 
         self._result_view = ResultView()
         self._result_view.request_again.connect(self._on_request_again)
+        self._result_view.image_dropped.connect(self.image_dropped)
         self._stack.addWidget(self._result_view)  # _PAGE_RESULT
 
         self._status_bar = QStatusBar()
@@ -141,6 +142,10 @@ class MainWindow(QMainWindow):
         change_loc_action = QAction("インストール場所を変更...", self)
         change_loc_action.triggered.connect(self._change_install_location)
         settings_menu.addAction(change_loc_action)
+
+        auto_save_action = QAction("自動保存先を設定...", self)
+        auto_save_action.triggered.connect(self._change_auto_save_folder)
+        settings_menu.addAction(auto_save_action)
 
         settings_menu.addSeparator()
         self._preset_menu = settings_menu.addMenu("モデルプリセット")
@@ -206,6 +211,7 @@ class MainWindow(QMainWindow):
         self._system_info_text: str = ""
         self._repair_callback = None
         self._change_location_cb = None
+        self._auto_save_folder_cb = None
         self._vram_mode_callback = None
         self._preset_change_callback = None
         self._preset_add_callback = None
@@ -222,6 +228,9 @@ class MainWindow(QMainWindow):
 
     def set_change_location_callback(self, cb) -> None:
         self._change_location_cb = cb
+
+    def set_auto_save_folder_callback(self, cb) -> None:
+        self._auto_save_folder_cb = cb
 
     def set_vram_mode_callback(self, cb) -> None:
         self._vram_mode_callback = cb
@@ -301,7 +310,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _try_paste_image(self) -> None:
         """クリップボードの画像をtempファイルに保存してD&Dと同じフローで処理する。"""
-        if self._stack.currentIndex() != _PAGE_DROP:
+        if self._stack.currentIndex() not in (_PAGE_DROP, _PAGE_RESULT):
             return
         img: QImage = QApplication.clipboard().image()
         if img.isNull():
@@ -336,6 +345,7 @@ class MainWindow(QMainWindow):
 
     def enter_single_mode(self, image_path: Path | None = None) -> None:
         """単体生成モードに切り替え (2バー + 画像プレビュー + ETA)。"""
+        self._result_view.stop_playback()
         self._stack.setCurrentIndex(_PAGE_PROGRESS)
         self._progress_view.enter_single(image_path)
 
@@ -424,6 +434,10 @@ class MainWindow(QMainWindow):
     def _change_install_location(self) -> None:
         if self._change_location_cb:
             self._change_location_cb()
+
+    def _change_auto_save_folder(self) -> None:
+        if self._auto_save_folder_cb:
+            self._auto_save_folder_cb()
 
     def _request_repair(self) -> None:
         if self._repair_callback:

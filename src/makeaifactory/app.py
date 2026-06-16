@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .gui.icon_data import app_icon
 
@@ -55,6 +55,7 @@ class _AsyncSignals(QObject):
     setup_ready    = Signal(str, list, str, bool)  # system_info_text, installed_presets, model_preset, sage_attention_available
     job_progress   = Signal(JobProgress)
     job_done       = Signal(Path, str, float, float, float)  # output, stem, elapsed, vram_peak, vram_avg
+    job_cancelled  = Signal()
     batch_progress      = Signal(str, float, float, float, str)  # message, all_pct, image_pct, task_pct, detail
     batch_current_image = Signal(Path)  # バッチ処理で処理中の画像が切り替わった
     batch_done          = Signal(int, int, float)     # completed, total, elapsed_sec
@@ -125,6 +126,22 @@ def run_app() -> int:
 
     window.set_change_location_callback(_change_install_location)
 
+    def _change_auto_save_folder() -> None:
+        current = settings.auto_save_folder
+        folder = QFileDialog.getExistingDirectory(
+            window, "自動保存先フォルダを選択", current or str(paths.outputs_dir),
+        )
+        if not folder:
+            return
+        settings.set_auto_save_folder(folder)
+        QMessageBox.information(
+            window,
+            "自動保存先を設定しました",
+            f"動画完成時に以下のフォルダへ自動保存します:\n{folder}",
+        )
+
+    window.set_auto_save_folder_callback(_change_auto_save_folder)
+
     def _on_vram_mode_change(mode: str) -> None:
         settings.set("vram_mode", mode)
         from .constants import VRAM_MODE_LABELS
@@ -161,6 +178,8 @@ def run_app() -> int:
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
+    # 単体生成キャンセル用フラグ（スレッドセーフ）
+    _single_cancel = threading.Event()
 
     # ─────────────────────────────────────────────────────────────────────
     # Slots
@@ -198,6 +217,13 @@ def run_app() -> int:
     def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
         window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
 
+    @Slot()
+    def _on_job_cancelled() -> None:
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        QMessageBox.information(window, "中断しました", "生成を中断しました")
+
     @Slot(str, float, float, float, str)
     def _on_batch_progress(message: str, all_pct: float, image_pct: float, task_pct: float, detail: str) -> None:
         window.update_batch_progress(message, all_pct, image_pct, task_pct, detail)
@@ -234,6 +260,7 @@ def run_app() -> int:
     signals.setup_ready.connect(_on_setup_ready,                Qt.ConnectionType.QueuedConnection)
     signals.job_progress.connect(_on_job_progress,              Qt.ConnectionType.QueuedConnection)
     signals.job_done.connect(_on_job_done,                      Qt.ConnectionType.QueuedConnection)
+    signals.job_cancelled.connect(_on_job_cancelled,            Qt.ConnectionType.QueuedConnection)
     signals.batch_progress.connect(_on_batch_progress,          Qt.ConnectionType.QueuedConnection)
     signals.batch_current_image.connect(_on_batch_current_image, Qt.ConnectionType.QueuedConnection)
     signals.batch_done.connect(_on_batch_done,                  Qt.ConnectionType.QueuedConnection)
@@ -307,12 +334,27 @@ def run_app() -> int:
         try:
             job_ctrl = ctrl.get_job_controller()
             output, bench = await job_ctrl.run_job(image_path, on_progress=_cb)
+            auto_folder = settings.auto_save_folder
+            if auto_folder:
+                try:
+                    dest_dir = Path(auto_folder)
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(output), str(dest_dir / f"{image_path.stem}.mp4"))
+                    logger.info("自動保存しました: %s", dest_dir / f"{image_path.stem}.mp4")
+                except Exception as e:
+                    logger.warning("自動保存に失敗しました: %s", e)
             signals.job_done.emit(output, image_path.stem, bench.elapsed_sec, bench.vram_peak_gb, bench.vram_avg_gb)
         except MakeAiFactoryError as e:
-            signals.error.emit("生成失敗", str(e), "", True)
+            if _single_cancel.is_set():
+                signals.job_cancelled.emit()
+            else:
+                signals.error.emit("生成失敗", str(e), "", True)
         except Exception as e:
-            logger.exception("生成中に予期しないエラー")
-            signals.error.emit("生成失敗", str(e), "", False)
+            if _single_cancel.is_set():
+                signals.job_cancelled.emit()
+            else:
+                logger.exception("生成中に予期しないエラー")
+                signals.error.emit("生成失敗", str(e), "", False)
 
     async def _run_batch(input_folder: Path, output_folder: Path) -> None:
         images = sorted(
@@ -375,6 +417,17 @@ def run_app() -> int:
     def _on_image_dropped(path: Path) -> None:
         window.enter_single_mode(path)
         window.update_single_progress("生成を準備しています...", 0.0, -1.0)
+
+        _single_cancel.clear()
+
+        def _do_cancel_single() -> None:
+            _single_cancel.set()
+            window.update_status("中断中...")
+            pool = QThreadPool.globalInstance()
+            pool.start(_Worker(_cancel_current_job(), signals))
+
+        window.show_cancel_btn(_do_cancel_single)
+
         pool = QThreadPool.globalInstance()
         pool.start(_Worker(_run_job(path), signals))
 

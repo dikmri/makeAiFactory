@@ -5,7 +5,8 @@ import os
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, Qt, QUrl, Signal
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -17,14 +18,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..constants import SUPPORTED_IMAGE_EXTENSIONS
+
 logger = logging.getLogger(__name__)
 
 
 class ResultView(QWidget):
     request_again = Signal()
+    image_dropped = Signal(Path)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setAcceptDrops(True)
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(12)
@@ -37,6 +42,10 @@ class ResultView(QWidget):
         self._video_widget = QVideoWidget()
         self._video_widget.setMinimumSize(480, 270)
         self._video_widget.setStyleSheet("background: #000; border-radius: 8px;")
+        # 動画再生領域はこのウィジェット内で最も面積が大きく、ユーザーが画像を
+        # ドロップしそうな場所のため、自身でもドロップを受け付けて親に委譲する。
+        self._video_widget.setAcceptDrops(True)
+        self._video_widget.installEventFilter(self)
         layout.addWidget(self._video_widget)
 
         self._player = QMediaPlayer()
@@ -66,7 +75,7 @@ class ResultView(QWidget):
         self._open_btn.setStyleSheet(self._btn_style())
         self._open_btn.clicked.connect(self._open_folder)
 
-        self._again_btn = QPushButton("もう一度作る")
+        self._again_btn = QPushButton("画面をリセット")
         self._again_btn.setStyleSheet(self._btn_style())
         self._again_btn.clicked.connect(self.request_again)
 
@@ -146,3 +155,31 @@ class ResultView(QWidget):
 
     def stop_playback(self) -> None:
         self._player.stop()
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._video_widget:
+            if event.type() == QEvent.Type.DragEnter:
+                self.dragEnterEvent(event)
+                return True
+            if event.type() == QEvent.Type.Drop:
+                self.dropEvent(event)
+                return True
+        return super().eventFilter(obj, event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if any(Path(u.toLocalFile()).suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS for u in urls):
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        urls = event.mimeData().urls()
+        for url in urls:
+            path = Path(url.toLocalFile())
+            if path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                logger.info("画像ドロップ (結果画面): %s", path)
+                self.image_dropped.emit(path)
+                return
+        logger.warning("対応していないファイル形式です")
