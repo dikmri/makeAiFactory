@@ -144,9 +144,10 @@ class AppController:
         await install_custom_nodes(paths.custom_nodes_dir, cn_manifest, paths.venv_dir, uv, paths.downloads_dir)
 
         model_manifest = self._load_model_manifest()
+        installed = self._settings.installed_presets
         from ..runtime.model_installer import check_disk_space
         try:
-            check_disk_space(paths.runtime_root, model_manifest)
+            check_disk_space(paths.runtime_root, model_manifest, presets=installed)
         except DiskSpaceError:
             self._state.set_setup_state(SetupState.FAILED)
             raise
@@ -161,10 +162,10 @@ class AppController:
                     percent=pct,
                 ))
 
-        await install_models(paths.runtime_root, model_manifest, progress_cb=_model_progress)
+        await install_models(paths.runtime_root, model_manifest, presets=installed, progress_cb=_model_progress)
 
         _progress(SetupState.VERIFYING_FILES, "ファイルを検証しています...")
-        check_required_models_present(paths.runtime_root, model_manifest)
+        check_required_models_present(paths.runtime_root, model_manifest, presets=installed)
 
         _progress(SetupState.BUILDING_WORKFLOW_TEMPLATE, "workflowを準備しています...")
         load_and_sanitize(
@@ -223,6 +224,41 @@ class AppController:
                 gpu_info=gpu_info, ram_total_gb=ram_total,
             )
         return self._job_ctrl
+
+    async def install_preset(
+        self,
+        preset: str,
+        on_progress: SetupCallback | None = None,
+    ) -> None:
+        """インストール済み後に追加プリセットのモデルをDLする。"""
+        from ..constants import _VALID_PRESETS
+        if preset not in _VALID_PRESETS:
+            raise ValueError(f"不正なプリセット: {preset}")
+
+        paths = self._paths
+        model_manifest = self._load_model_manifest()
+
+        def _progress(msg: str, pct: float = 0.0) -> None:
+            if on_progress:
+                on_progress(SetupProgress(
+                    state=SetupState.DOWNLOADING_MODELS,
+                    message=msg,
+                    percent=pct,
+                ))
+
+        from ..runtime.model_installer import check_disk_space, install_models, check_required_models_present
+        try:
+            check_disk_space(paths.runtime_root, model_manifest, presets=[preset])
+        except DiskSpaceError:
+            raise
+
+        def _model_progress(name: str, done: int, total: int) -> None:
+            pct = done / total * 100 if total > 0 else 0
+            _progress(f"モデルDL中: {name}", pct)
+
+        await install_models(paths.runtime_root, model_manifest, presets=[preset], progress_cb=_model_progress)
+        check_required_models_present(paths.runtime_root, model_manifest, presets=[preset])
+        self._settings.add_installed_preset(preset)
 
     def stop_server(self) -> None:
         if self._server:

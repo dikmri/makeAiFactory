@@ -143,6 +143,15 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(change_loc_action)
 
         settings_menu.addSeparator()
+        self._preset_menu = settings_menu.addMenu("モデルプリセット")
+        self._preset_group = QActionGroup(self)
+        self._preset_group.setExclusive(True)
+        self._preset_actions: dict[str, QAction] = {}
+        self._preset_change_callback = None
+        self._preset_add_callback = None
+        self._rebuild_preset_menu(installed_presets=["normal"], active_preset="normal")
+
+        settings_menu.addSeparator()
         vram_menu = settings_menu.addMenu("VRAMモード")
         self._vram_group = QActionGroup(self)
         self._vram_group.setExclusive(True)
@@ -189,6 +198,8 @@ class MainWindow(QMainWindow):
         self._repair_callback = None
         self._change_location_cb = None
         self._vram_mode_callback = None
+        self._preset_change_callback = None
+        self._preset_add_callback = None
 
     def set_paths(self, logs_dir: Path, output_dir: Path) -> None:
         self._logs_dir = logs_dir
@@ -205,6 +216,51 @@ class MainWindow(QMainWindow):
 
     def set_vram_mode_callback(self, cb) -> None:
         self._vram_mode_callback = cb
+
+    def set_preset_change_callback(self, cb) -> None:
+        self._preset_change_callback = cb
+
+    def set_preset_add_callback(self, cb) -> None:
+        self._preset_add_callback = cb
+
+    def _rebuild_preset_menu(self, installed_presets: list[str], active_preset: str) -> None:
+        from ..constants import MODEL_PRESETS
+        self._preset_menu.clear()
+        for act in list(self._preset_actions.values()):
+            self._preset_group.removeAction(act)
+        self._preset_actions.clear()
+
+        for key in MODEL_PRESETS:
+            if key not in installed_presets:
+                continue
+            info = MODEL_PRESETS[key]
+            act = QAction(info["label"], self)
+            act.setCheckable(True)
+            act.setChecked(key == active_preset)
+            act.triggered.connect(lambda checked, k=key: self._on_preset_selected(k))
+            self._preset_group.addAction(act)
+            self._preset_menu.addAction(act)
+            self._preset_actions[key] = act
+
+        self._preset_menu.addSeparator()
+        add_act = QAction("プリセットを追加...", self)
+        add_act.triggered.connect(self._on_add_preset)
+        self._preset_menu.addAction(add_act)
+
+    def update_preset_menu(self, installed_presets: list[str], active_preset: str) -> None:
+        self._rebuild_preset_menu(installed_presets, active_preset)
+
+    def set_active_preset(self, preset: str) -> None:
+        if preset in self._preset_actions:
+            self._preset_actions[preset].setChecked(True)
+
+    def _on_preset_selected(self, preset: str) -> None:
+        if self._preset_change_callback:
+            self._preset_change_callback(preset)
+
+    def _on_add_preset(self) -> None:
+        if self._preset_add_callback:
+            self._preset_add_callback()
 
     def set_current_vram_mode(self, mode: str) -> None:
         if mode in self._vram_actions:

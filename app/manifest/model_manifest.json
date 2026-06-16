@@ -1,28 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "models": [
-    {
-      "name": "Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
-      "type": "unet",
-      "target": "ComfyUI/models/unet/Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
-      "source_url": "https://huggingface.co/Zuntan/Wan22-FastMix/resolve/main/Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
-      "sha256": "658ecff6c68bedfee70a8530a0bedfe5ed5beef1f9d9dcfc0f06557b7367b79b",
-      "size_bytes": 9651739136,
-      "required": true,
-      "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
-    },
-    {
-      "name": "Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
-      "type": "unet",
-      "target": "ComfyUI/models/unet/Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
-      "source_url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
-      "sha256": "962d9c937a6e882562cd234ba87c5cfc19d6e99efbf0fc31b4dd9e43eb493ae6",
-      "size_bytes": 12003652096,
-      "required": true,
-      "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
-    },
     {
       "name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
       "type": "clip",
@@ -32,7 +10,8 @@
       "size_bytes": 6735906897,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "wan_2.1_vae.safetensors",
@@ -43,7 +22,8 @@
       "size_bytes": 253815318,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "clip-vit-large-patch14.safetensors",
@@ -54,7 +34,8 @@
       "size_bytes": 1710540580,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
@@ -65,7 +46,8 @@
       "size_bytes": 31359158,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
@@ -76,7 +58,8 @@
       "size_bytes": 739472104,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "NSFW-22-H-e8.safetensors",
@@ -88,7 +71,8 @@
       "required": true,
       "required_manual": false,
       "license": "TO_BE_CONFIRMED",
-      "note": "成人向けLoRA。配布前にライセンス確認必須"
+      "note": "成人向けLoRA。配布前にライセンス確認必須",
+      "presets": []
     },
     {
       "name": "NSFW-22-L-e8.safetensors",
@@ -100,7 +84,8 @@
       "required": true,
       "required_manual": false,
       "license": "TO_BE_CONFIRMED",
-      "note": "成人向けLoRA。配布前にライセンス確認必須"
+      "note": "成人向けLoRA。配布前にライセンス確認必須",
+      "presets": []
     },
     {
       "name": "wan22-m4crom4sti4-i2v-20epoc-high-k3nk.safetensors",
@@ -111,7 +96,8 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "wan22-m4crom4sti4-i2v-20epoc-low-k3nk.safetensors",
@@ -122,7 +108,8 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "slop_twerk_HighNoise_merged3_7_v2.safetensors",
@@ -133,7 +120,8 @@
       "size_bytes": 306847584,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
     },
     {
       "name": "slop_twerk_LowNoise_merged3_7_v2.safetensors",
@@ -144,7 +132,69 @@
       "size_bytes": 306847576,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED"
+      "license": "TO_BE_CONFIRMED",
+      "presets": []
+    },
+    {
+      "name": "Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
+      "type": "unet",
+      "target": "ComfyUI/models/unet/Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
+      "source_url": "https://huggingface.co/Zuntan/Wan22-FastMix/resolve/main/Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
+      "sha256": "658ecff6c68bedfee70a8530a0bedfe5ed5beef1f9d9dcfc0f06557b7367b79b",
+      "size_bytes": 9651739136,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "presets": ["normal"]
+    },
+    {
+      "name": "Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
+      "type": "unet",
+      "target": "ComfyUI/models/unet/Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
+      "source_url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
+      "sha256": "962d9c937a6e882562cd234ba87c5cfc19d6e99efbf0fc31b4dd9e43eb493ae6",
+      "size_bytes": 12003652096,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "presets": ["normal"]
+    },
+    {
+      "name": "Wan22-I2V-FastMix_v10-H-Q3_K_M.gguf",
+      "type": "unet",
+      "target": "ComfyUI/models/unet/Wan22-I2V-FastMix_v10-H-Q3_K_M.gguf",
+      "source_url": "https://huggingface.co/Zuntan/Wan22-FastMix/resolve/main/Wan22-I2V-FastMix_v10-H-Q3_K_M.gguf",
+      "sha256": "fd508b315984297d46d0c20405f7774cab18e0b3eb7e79a83a2ecc87c76c4cb8",
+      "size_bytes": 7176116736,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "note": "lite / ultralite 共有モデル",
+      "presets": ["lite", "ultralite"]
+    },
+    {
+      "name": "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
+      "type": "unet",
+      "target": "ComfyUI/models/unet/Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
+      "source_url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
+      "sha256": "4472e4e30a9729da0e0de36c708c45344a70799d431b17371b0c513d20a1351b",
+      "size_bytes": 7176106496,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "presets": ["lite"]
+    },
+    {
+      "name": "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf",
+      "type": "unet",
+      "target": "ComfyUI/models/unet/Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf",
+      "source_url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf",
+      "sha256": "384b33bfebf1e3277abc2373b9d55d9672e49f3cfa92887161a6c72dd479ec5d",
+      "size_bytes": 5300957696,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "presets": ["ultralite"]
     }
   ]
 }

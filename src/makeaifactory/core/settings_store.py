@@ -11,7 +11,9 @@ _DEFAULTS = {
     "save_base_video": False,
     "developer_mode": False,
     "agreed_to_terms": False,
-    "vram_mode": "normal",   # "normal" | "low" | "novram"
+    "vram_mode": "normal",        # "normal" | "novram"
+    "model_preset": "normal",     # "normal" | "lite" | "ultralite"
+    "installed_presets": ["normal"],
 }
 
 
@@ -67,3 +69,28 @@ class SettingsStore:
     def vram_mode(self) -> str:
         v = str(self.get("vram_mode"))
         return v if v in ("normal", "novram") else "normal"
+
+    @property
+    def model_preset(self) -> str:
+        """現在アクティブなモデルプリセット。"""
+        from ..constants import _VALID_PRESETS
+        v = str(self.get("model_preset") or "normal")
+        return v if v in _VALID_PRESETS else "normal"
+
+    def set_model_preset(self, preset: str) -> None:
+        self.set("model_preset", preset)
+
+    @property
+    def installed_presets(self) -> list[str]:
+        """インストール済みプリセットのリスト。"""
+        from ..constants import _VALID_PRESETS
+        v = self.get("installed_presets")
+        if isinstance(v, list) and v:
+            return [p for p in v if p in _VALID_PRESETS]
+        return ["normal"]
+
+    def add_installed_preset(self, preset: str) -> None:
+        presets = self.installed_presets
+        if preset not in presets:
+            presets.append(preset)
+        self.set("installed_presets", presets)

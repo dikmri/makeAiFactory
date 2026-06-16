@@ -15,14 +15,36 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, int, int], None]
 
 
-def check_disk_space(runtime_root: Path, manifest: ModelManifest, buffer_gb: float = DISK_BUFFER_GB) -> None:
-    import shutil
-    # 未ダウンロードのモデルのみを集計（既存ファイルは除外）
+def _needed_models(manifest: ModelManifest, presets: list[str]) -> list[ModelEntry]:
+    """指定プリセット群で必要なモデルエントリを返す（重複なし）。"""
+    result: list[ModelEntry] = []
+    seen: set[str] = set()
+    for m in manifest.models:
+        if m.name in seen:
+            continue
+        # presets が空 → 共有モデル (常に必要)
+        # presets に値 → 指定プリセットのどれかに含まれるなら必要
+        if m.is_shared or any(p in presets for p in m.presets):
+            result.append(m)
+            seen.add(m.name)
+    return result
+
+
+def check_disk_space(
+    runtime_root: Path,
+    manifest: ModelManifest,
+    presets: list[str] | None = None,
+    buffer_gb: float = DISK_BUFFER_GB,
+) -> None:
+    if presets is None:
+        presets = ["normal"]
+    models = _needed_models(manifest, presets)
     missing_bytes = sum(
-        m.size_bytes for m in manifest.models
-        if m.required and not m.required_manual and not (runtime_root / m.target).exists()
+        m.size_bytes for m in models
+        if not m.required_manual and not (runtime_root / m.target).exists()
     )
     needed_gb = missing_bytes / (1024 ** 3) + buffer_gb
+    import shutil
     stat = shutil.disk_usage(runtime_root)
     free_gb = stat.free / (1024 ** 3)
     logger.info("ディスク空き: %.1f GB / 必要: %.1f GB", free_gb, needed_gb)
@@ -30,21 +52,42 @@ def check_disk_space(runtime_root: Path, manifest: ModelManifest, buffer_gb: flo
         raise DiskSpaceError(required_gb=needed_gb, available_gb=free_gb)
 
 
-def get_missing_models(runtime_root: Path, manifest: ModelManifest) -> list[ModelEntry]:
+def get_missing_models(
+    runtime_root: Path,
+    manifest: ModelManifest,
+    presets: list[str] | None = None,
+) -> list[ModelEntry]:
+    if presets is None:
+        presets = ["normal"]
     missing = []
-    for model in manifest.models:
-        target = runtime_root / model.target
-        if not target.exists():
+    for model in _needed_models(manifest, presets):
+        if not (runtime_root / model.target).exists():
             missing.append(model)
     return missing
+
+
+def estimate_download_bytes(
+    runtime_root: Path,
+    manifest: ModelManifest,
+    presets: list[str],
+) -> int:
+    """指定プリセット追加インストール時の未ダウンロード合計バイト数。"""
+    return sum(
+        m.size_bytes
+        for m in _needed_models(manifest, presets)
+        if not m.required_manual and not (runtime_root / m.target).exists()
+    )
 
 
 async def install_models(
     runtime_root: Path,
     manifest: ModelManifest,
+    presets: list[str] | None = None,
     progress_cb: ProgressCallback | None = None,
 ) -> None:
-    for model in manifest.models:
+    if presets is None:
+        presets = ["normal"]
+    for model in _needed_models(manifest, presets):
         if not model.required:
             continue
         target = runtime_root / model.target
@@ -78,13 +121,18 @@ async def install_models(
         )
 
 
-def check_required_models_present(runtime_root: Path, manifest: ModelManifest) -> None:
+def check_required_models_present(
+    runtime_root: Path,
+    manifest: ModelManifest,
+    presets: list[str] | None = None,
+) -> None:
+    if presets is None:
+        presets = ["normal"]
     missing_names = []
-    for model in manifest.models:
+    for model in _needed_models(manifest, presets):
         if not model.required or model.required_manual:
             continue
-        target = runtime_root / model.target
-        if not target.exists():
+        if not (runtime_root / model.target).exists():
             missing_names.append(model.name)
     if missing_names:
         raise MissingModelError(missing_names)

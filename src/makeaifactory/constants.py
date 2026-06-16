@@ -1,5 +1,5 @@
 APP_NAME = "makeAiFactory"
-APP_VERSION = "0.4.5"
+APP_VERSION = "0.5.0"
 GITHUB_REPO = "dikmri/makeAiFactory"
 RUNTIME_VERSION = "2026.06.14.1"
 WORKFLOW_TEMPLATE_VERSION = "1"
@@ -30,3 +30,29 @@ OUTPUT_VIDEO_NODE_ID = "188"
 BASE_VIDEO_NODE_ID = "129"
 SEED_NODE_ID = "251"
 RESOLUTION_PICKER_NODE_ID = "291"
+UNET_HIGH_NODE_ID = "295"   # UnetLoaderGGUF — 高ノイズ段 (FastMix)
+UNET_LOW_NODE_ID  = "296"   # UnetLoaderGGUF — 低ノイズ段 (LowNoise)
+
+# ── モデルプリセット ──────────────────────────────────────────────────────────
+# unet_high / unet_low はワークフローのノード 295 / 296 に動的にパッチされる
+MODEL_PRESETS: dict[str, dict] = {
+    "normal": {
+        "label":    "通常モード",
+        "desc":     "最高品質 | VRAM ~14 GB / RAM ~48 GB+",
+        "unet_high": "Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
+        "unet_low":  "Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf",
+    },
+    "lite": {
+        "label":    "軽量モード",
+        "desc":     "高品質 | VRAM ~9 GB / RAM ~32 GB+",
+        "unet_high": "Wan22-I2V-FastMix_v10-H-Q3_K_M.gguf",
+        "unet_low":  "Wan2.2-I2V-A14B-LowNoise-Q3_K_M.gguf",
+    },
+    "ultralite": {
+        "label":    "超軽量モード",
+        "desc":     "標準品質 | VRAM ~8 GB / RAM ~24 GB+",
+        "unet_high": "Wan22-I2V-FastMix_v10-H-Q3_K_M.gguf",
+        "unet_low":  "Wan2.2-I2V-A14B-LowNoise-Q2_K.gguf",
+    },
+}
+_VALID_PRESETS = set(MODEL_PRESETS.keys())

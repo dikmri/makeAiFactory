@@ -138,6 +138,19 @@ def run_app() -> int:
     window.set_vram_mode_callback(_on_vram_mode_change)
     window.set_current_vram_mode(settings.vram_mode)
 
+    def _on_preset_change(preset: str) -> None:
+        settings.set_model_preset(preset)
+        from .constants import MODEL_PRESETS
+        label = MODEL_PRESETS.get(preset, {}).get("label", preset)
+        QMessageBox.information(
+            window,
+            "モデルプリセットを変更しました",
+            f"{label} に設定しました。\n次回の生成から反映されます。",
+        )
+
+    window.set_preset_change_callback(_on_preset_change)
+    window.set_preset_add_callback(lambda: _trigger_preset_install(ctrl, window, paths, settings))
+
     signals = _AsyncSignals()
 
     # バッチキャンセル用フラグ（スレッドセーフ）
@@ -262,6 +275,7 @@ def run_app() -> int:
         try:
             await ctrl.ensure_ready(on_progress=_cb)
             window.set_system_info(ctrl.get_system_info_text())
+            window.update_preset_menu(settings.installed_presets, settings.model_preset)
             signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message="準備完了"))
         except SystemUnsupportedError as e:
             signals.error.emit("対応環境外", str(e), "", False)
@@ -383,6 +397,68 @@ def run_app() -> int:
     result = app.exec()
     ctrl.stop_server()
     return result
+
+
+def _trigger_preset_install(ctrl: AppController, window: MainWindow, paths: AppPaths, settings: SettingsStore) -> None:
+    import json
+    from .gui.model_preset_dialog import ModelPresetDialog
+    from .domain.manifest import ModelManifest
+
+    with paths.model_manifest_json().open("r", encoding="utf-8") as f:
+        manifest = ModelManifest.from_dict(json.load(f))
+
+    dlg = ModelPresetDialog(
+        runtime_root=paths.runtime_root,
+        manifest=manifest,
+        installed_presets=settings.installed_presets,
+        parent=window,
+    )
+    if dlg.exec() != ModelPresetDialog.DialogCode.Accepted:
+        return
+
+    presets_to_install = dlg.selected_presets
+    if not presets_to_install:
+        return
+
+    signals = _AsyncSignals()
+
+    @Slot(SetupProgress)
+    def _on_install_progress(p: SetupProgress) -> None:
+        dlg.show_progress(p.message, p.percent)
+
+    signals.setup_progress.connect(_on_install_progress, Qt.ConnectionType.QueuedConnection)
+
+    @Slot(str, str, str, bool)
+    def _on_install_error(title: str, msg: str, detail: str, show_repair: bool) -> None:
+        dlg.close()
+        window.show_error(title, msg, detail, False)
+
+    signals.error.connect(_on_install_error, Qt.ConnectionType.QueuedConnection)
+
+    async def _do_install() -> None:
+        for preset in presets_to_install:
+            try:
+                def _cb(p: SetupProgress) -> None:
+                    signals.setup_progress.emit(p)
+                await ctrl.install_preset(preset, on_progress=_cb)
+            except Exception as e:
+                logger.exception("プリセットインストールエラー: %s", preset)
+                signals.error.emit("インストール失敗", str(e), "", False)
+                return
+        signals.setup_progress.emit(SetupProgress(
+            state=SetupState.READY, message="インストール完了", percent=100
+        ))
+
+    @Slot(SetupProgress)
+    def _on_done(p: SetupProgress) -> None:
+        if p.state == SetupState.READY:
+            dlg.mark_done()
+            window.update_preset_menu(settings.installed_presets, settings.model_preset)
+
+    signals.setup_progress.connect(_on_done, Qt.ConnectionType.QueuedConnection)
+
+    pool = QThreadPool.globalInstance()
+    pool.start(_Worker(_do_install(), signals))
 
 
 def _trigger_repair(ctrl: AppController, window: MainWindow, paths: AppPaths, settings: SettingsStore) -> None:

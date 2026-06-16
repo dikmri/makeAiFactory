@@ -86,11 +86,15 @@ class JobController:
 
         # workflow patch
         seed = random.randint(0, 2**32 - 1) if self._settings.seed_randomize else None
+        from ..constants import MODEL_PRESETS
+        preset_def = MODEL_PRESETS.get(self._settings.model_preset, MODEL_PRESETS["normal"])
         ctx = WorkflowPatchContext(
             job_id=job.job_id,
             uploaded_image_name=uploaded_name,
             output_prefix=make_output_prefix(job.job_id),
             seed=seed,
+            unet_high_name=preset_def["unet_high"],
+            unet_low_name=preset_def["unet_low"],
         )
         patched = patch_workflow(self._template, ctx)
         job.seed = seed

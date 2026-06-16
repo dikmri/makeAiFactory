@@ -16,6 +16,14 @@ class ModelEntry:
     required_manual: bool
     license: str
     note: str = ""
+    # presets が空 → 常に必要な共有モデル
+    # presets に値 → 該当プリセットのみに必要
+    presets: list[str] = field(default_factory=list)
+
+    @property
+    def is_shared(self) -> bool:
+        """プリセットに関わらず常に必要な共有モデル。"""
+        return len(self.presets) == 0
 
     @property
     def is_downloadable(self) -> bool:
@@ -93,6 +101,7 @@ class ModelManifest:
                 required_manual=m.get("required_manual", False),
                 license=m.get("license", ""),
                 note=m.get("note", ""),
+                presets=m.get("presets", []),
             )
             for m in d["models"]
         ]
