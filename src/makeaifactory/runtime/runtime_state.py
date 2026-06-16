@@ -55,3 +55,11 @@ class RuntimeState:
         self._data["sage_attention_available"] = available
         self._save()
         logger.info("RuntimeState: sage_attention_available=%s", available)
+
+    @property
+    def sage_attention_checked(self) -> bool:
+        return bool(self._data.get("sage_attention_checked", False))
+
+    def set_sage_attention_checked(self, checked: bool) -> None:
+        self._data["sage_attention_checked"] = checked
+        self._save()

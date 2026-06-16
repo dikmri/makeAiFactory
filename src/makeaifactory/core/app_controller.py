@@ -97,6 +97,36 @@ class AppController:
     def sage_attention_available(self) -> bool:
         return self._state.sage_attention_available
 
+    async def _ensure_sage_attention_installed(self, on_progress: SetupCallback | None = None) -> None:
+        """SageAttentionの導入確認/インストールを一度だけ行う。
+
+        setup()内だけでなくensure_ready()の「既にREADY」パスからも呼ばれる。
+        この機能の追加前に既にREADYだったruntimeでは再起動してもsetup()自体は
+        呼ばれないため、ここで個別にチェックしないと既存ユーザーには永久に
+        sage_attention_availableがFalseのままになってしまう。
+        """
+        paths = self._paths
+        rm = self._load_runtime_manifest()
+        if not rm.sageattn_enabled:
+            self._state.set_sage_attention_checked(True)
+            self._state.set_sage_attention_available(False)
+            return
+        if on_progress:
+            on_progress(SetupProgress(
+                state=SetupState.INSTALLING_SAGEATTENTION,
+                message="高速化モジュール (SageAttention) を確認しています...",
+            ))
+        paths.uv_dir.mkdir(parents=True, exist_ok=True)
+        uv = await UvManager.ensure(paths.uv_dir, rm.uv_windows_url, rm.uv_sha256)
+        sage_ok = await install_sage_attention(
+            paths.venv_dir, uv,
+            rm.sageattn_triton_version, rm.sageattn_wheel_url, rm.sageattn_wheel_sha256,
+            paths.downloads_dir,
+        )
+        self._state.set_sage_attention_checked(True)
+        self._state.set_sage_attention_available(sage_ok)
+        logger.info("SageAttention利用可否: %s", sage_ok)
+
     async def setup(self, on_progress: SetupCallback | None = None) -> None:
         paths = self._paths
         paths.ensure_dirs()
@@ -147,13 +177,7 @@ class AppController:
         _progress(SetupState.INSTALLING_CUSTOM_NODES, "custom nodesをインストールしています...")
         await install_custom_nodes(paths.custom_nodes_dir, cn_manifest, paths.venv_dir, uv, paths.downloads_dir)
 
-        _progress(SetupState.INSTALLING_SAGEATTENTION, "高速化モジュールをインストールしています...")
-        sage_ok = await install_sage_attention(
-            paths.venv_dir, uv,
-            rm.sageattn_triton_version, rm.sageattn_wheel_url, rm.sageattn_wheel_sha256,
-            paths.downloads_dir,
-        ) if rm.sageattn_enabled else False
-        self._state.set_sage_attention_available(sage_ok)
+        await self._ensure_sage_attention_installed(on_progress)
 
         model_manifest = self._load_model_manifest()
         installed = self._settings.installed_presets
@@ -218,6 +242,8 @@ class AppController:
                 except SystemUnsupportedError:
                     self._state.set_setup_state(SetupState.FAILED)
                     raise
+            if not self._state.sage_attention_checked:
+                await self._ensure_sage_attention_installed(on_progress)
             if self._server is None or not self._server.is_running:
                 paths = self._paths
                 self._server = ComfyServerController(paths.python_exe, paths.comfyui_dir, paths.comfyui_log)
