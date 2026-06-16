@@ -85,6 +85,14 @@ class AppPaths:
         return self.app_dir / "manifest"
 
     @property
+    def assets_dir(self) -> Path:
+        return self.app_dir / "assets"
+
+    @property
+    def complete_se_wav(self) -> Path:
+        return self.assets_dir / "complete.wav"
+
+    @property
     def uv_dir(self) -> Path:
         return self._root / "uv"
 

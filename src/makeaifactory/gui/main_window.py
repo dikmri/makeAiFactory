@@ -147,6 +147,13 @@ class MainWindow(QMainWindow):
         auto_save_action.triggered.connect(self._change_auto_save_folder)
         settings_menu.addAction(auto_save_action)
 
+        self._auto_save_enabled_action = QAction("完成時に自動保存する", self)
+        self._auto_save_enabled_action.setCheckable(True)
+        self._auto_save_enabled_action.setChecked(False)
+        self._auto_save_enabled_action.triggered.connect(self._on_auto_save_toggled)
+        settings_menu.addAction(self._auto_save_enabled_action)
+        self._auto_save_toggle_cb = None
+
         settings_menu.addSeparator()
         self._preset_menu = settings_menu.addMenu("モデルプリセット")
         self._preset_group = QActionGroup(self)
@@ -183,6 +190,36 @@ class MainWindow(QMainWindow):
         self._sage_attention_action.triggered.connect(self._on_sage_attention_toggled)
         settings_menu.addAction(self._sage_attention_action)
         self._sage_attention_callback = None
+
+        settings_menu.addSeparator()
+        se_menu = settings_menu.addMenu("完成通知音")
+
+        self._se_enabled_action = QAction("通知音を鳴らす", self)
+        self._se_enabled_action.setCheckable(True)
+        self._se_enabled_action.setChecked(True)
+        self._se_enabled_action.triggered.connect(self._on_se_enabled_toggled)
+        se_menu.addAction(self._se_enabled_action)
+        self._se_enabled_callback = None
+
+        self._se_batch_action = QAction("フォルダ生成完了時も鳴らす", self)
+        self._se_batch_action.setCheckable(True)
+        self._se_batch_action.setChecked(True)
+        self._se_batch_action.triggered.connect(self._on_se_batch_toggled)
+        se_menu.addAction(self._se_batch_action)
+        self._se_batch_callback = None
+
+        se_menu.addSeparator()
+        self._se_volume_group = QActionGroup(self)
+        self._se_volume_group.setExclusive(True)
+        self._se_volume_actions: dict[int, QAction] = {}
+        for vol in (25, 50, 75, 100):
+            act = QAction(f"音量 {vol}%", self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda checked, v=vol: self._on_se_volume_selected(v))
+            self._se_volume_group.addAction(act)
+            se_menu.addAction(act)
+            self._se_volume_actions[vol] = act
+        self._se_volume_callback = None
 
         help_menu = menu_bar.addMenu("ヘルプ")
         log_action = QAction("ログを開く", self)
@@ -231,6 +268,47 @@ class MainWindow(QMainWindow):
 
     def set_auto_save_folder_callback(self, cb) -> None:
         self._auto_save_folder_cb = cb
+
+    def set_auto_save_toggle_callback(self, cb) -> None:
+        self._auto_save_toggle_cb = cb
+
+    def set_auto_save_checked(self, checked: bool) -> None:
+        self._auto_save_enabled_action.setChecked(checked)
+
+    def _on_auto_save_toggled(self, checked: bool) -> None:
+        if self._auto_save_toggle_cb:
+            self._auto_save_toggle_cb(checked)
+
+    def set_se_enabled_callback(self, cb) -> None:
+        self._se_enabled_callback = cb
+
+    def set_se_enabled_checked(self, checked: bool) -> None:
+        self._se_enabled_action.setChecked(checked)
+
+    def _on_se_enabled_toggled(self, checked: bool) -> None:
+        if self._se_enabled_callback:
+            self._se_enabled_callback(checked)
+
+    def set_se_batch_callback(self, cb) -> None:
+        self._se_batch_callback = cb
+
+    def set_se_batch_checked(self, checked: bool) -> None:
+        self._se_batch_action.setChecked(checked)
+
+    def _on_se_batch_toggled(self, checked: bool) -> None:
+        if self._se_batch_callback:
+            self._se_batch_callback(checked)
+
+    def set_se_volume_callback(self, cb) -> None:
+        self._se_volume_callback = cb
+
+    def set_se_volume_checked(self, volume: int) -> None:
+        if volume in self._se_volume_actions:
+            self._se_volume_actions[volume].setChecked(True)
+
+    def _on_se_volume_selected(self, volume: int) -> None:
+        if self._se_volume_callback:
+            self._se_volume_callback(volume)
 
     def set_vram_mode_callback(self, cb) -> None:
         self._vram_mode_callback = cb

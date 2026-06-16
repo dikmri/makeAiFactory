@@ -8,7 +8,8 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal, Slot
+from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .gui.icon_data import app_icon
@@ -142,6 +143,48 @@ def run_app() -> int:
 
     window.set_auto_save_folder_callback(_change_auto_save_folder)
 
+    def _on_auto_save_toggled(checked: bool) -> None:
+        if checked and not settings.auto_save_folder:
+            folder = QFileDialog.getExistingDirectory(
+                window, "自動保存先フォルダを選択", str(paths.outputs_dir),
+            )
+            if not folder:
+                window.set_auto_save_checked(False)
+                return
+            settings.set_auto_save_folder(folder)
+        settings.set_auto_save_enabled(checked)
+
+    window.set_auto_save_toggle_callback(_on_auto_save_toggled)
+    window.set_auto_save_checked(settings.auto_save_enabled)
+
+    se = QSoundEffect()
+    se.setSource(QUrl.fromLocalFile(str(paths.complete_se_wav)))
+    se.setVolume(settings.se_volume / 100)
+
+    def _play_complete_se(is_batch: bool = False) -> None:
+        if not settings.se_enabled:
+            return
+        if is_batch and not settings.se_on_batch_complete:
+            return
+        se.setVolume(settings.se_volume / 100)
+        se.play()
+
+    def _on_se_enabled_toggle(checked: bool) -> None:
+        settings.set_se_enabled(checked)
+
+    def _on_se_batch_toggle(checked: bool) -> None:
+        settings.set_se_on_batch_complete(checked)
+
+    def _on_se_volume_change(volume: int) -> None:
+        settings.set_se_volume(volume)
+
+    window.set_se_enabled_callback(_on_se_enabled_toggle)
+    window.set_se_batch_callback(_on_se_batch_toggle)
+    window.set_se_volume_callback(_on_se_volume_change)
+    window.set_se_enabled_checked(settings.se_enabled)
+    window.set_se_batch_checked(settings.se_on_batch_complete)
+    window.set_se_volume_checked(settings.se_volume)
+
     def _on_vram_mode_change(mode: str) -> None:
         settings.set("vram_mode", mode)
         from .constants import VRAM_MODE_LABELS
@@ -216,6 +259,7 @@ def run_app() -> int:
     @Slot(Path, str, float, float, float)
     def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
         window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
+        _play_complete_se()
 
     @Slot()
     def _on_job_cancelled() -> None:
@@ -246,6 +290,7 @@ def run_app() -> int:
         else:
             title = "バッチ処理が完了しました"
             msg = f"{completed}枚 の動画を生成しました\n経過時間: {time_str}"
+            _play_complete_se(is_batch=True)
         QMessageBox.information(window, title, msg)
         window.show_drop_page()
 
@@ -335,7 +380,7 @@ def run_app() -> int:
             job_ctrl = ctrl.get_job_controller()
             output, bench = await job_ctrl.run_job(image_path, on_progress=_cb)
             auto_folder = settings.auto_save_folder
-            if auto_folder:
+            if settings.auto_save_enabled and auto_folder:
                 try:
                     dest_dir = Path(auto_folder)
                     dest_dir.mkdir(parents=True, exist_ok=True)

@@ -130,12 +130,6 @@ def apply_update_and_restart(zip_path: Path) -> None:
     log_path = exe_dir / "_update_debug.log"
     bat_path = exe_dir / "_update.bat"
 
-    # EXE 起動: PowerShell Start-Process が最も確実
-    ps_launch = (
-        "powershell -NoProfile -NonInteractive -WindowStyle Hidden "
-        '-Command "Start-Process -FilePath \'%EXE%\'"'
-    )
-
     bat_lines = [
         "@echo off",
         f'set "LOG={log_path}"',
@@ -193,9 +187,13 @@ def apply_update_and_restart(zip_path: Path) -> None:
         ")",
         "",
         # 新バージョンの EXE 起動
+        # cmd.exe 組み込みの start を使う (powershell -Command 経由は廃止):
+        # 一部のAV/EDRが「非対話シェルから隠しウィンドウでpowershell -Commandを
+        # 起動する」パターンを不審な挙動として静かにブロックすることがあり、
+        # それが原因でコピーは成功するのに再起動だけ失敗する不具合が起きていた。
         'if exist "%EXE%" (',
         '    echo %TIME% launching %EXE% >> "%LOG%"',
-        f"    {ps_launch}",
+        '    start "" /D "%DST%" "%EXE%"',
         '    echo %TIME% launch command sent >> "%LOG%"',
         ") else (",
         '    echo ERROR: exe not found after copy: %EXE% >> "%LOG%"',

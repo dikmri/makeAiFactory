@@ -12,7 +12,7 @@ _site_pkgs = _spec_dir / '.venv' / 'Lib' / 'site-packages'
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 
-datas = [('app/manifest', 'app/manifest'), ('app/workflow', 'app/workflow')]
+datas = [('app/manifest', 'app/manifest'), ('app/workflow', 'app/workflow'), ('app/assets', 'app/assets')]
 binaries = []
 hiddenimports = []
 

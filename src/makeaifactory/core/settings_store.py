@@ -15,7 +15,11 @@ _DEFAULTS = {
     "model_preset": "normal",     # "normal" | "lite" | "ultralite"
     "installed_presets": ["normal"],
     "sage_attention_enabled": False,  # 高速化(SageAttention)。未インストール環境では無視されdisabledのまま
-    "auto_save_folder": "",       # 動画完成時の自動保存先。空文字列 = 無効
+    "auto_save_folder": "",       # 動画完成時の自動保存先フォルダ (パスのみ。有効/無効は別フラグ)
+    "auto_save_enabled": False,   # 自動保存のON/OFF。フォルダ設定とは独立
+    "se_enabled": True,            # 完成通知音のON/OFF (マスタースイッチ)
+    "se_volume": 75,                # 完成通知音の音量 (0-100)
+    "se_on_batch_complete": True,   # フォルダ(バッチ)生成完了時にも通知音を鳴らすか
 }
 
 
@@ -110,3 +114,32 @@ class SettingsStore:
 
     def set_auto_save_folder(self, folder: str) -> None:
         self.set("auto_save_folder", folder)
+
+    @property
+    def auto_save_enabled(self) -> bool:
+        return bool(self.get("auto_save_enabled"))
+
+    def set_auto_save_enabled(self, enabled: bool) -> None:
+        self.set("auto_save_enabled", enabled)
+
+    @property
+    def se_enabled(self) -> bool:
+        return bool(self.get("se_enabled"))
+
+    def set_se_enabled(self, enabled: bool) -> None:
+        self.set("se_enabled", enabled)
+
+    @property
+    def se_volume(self) -> int:
+        v = int(self.get("se_volume") or 0)
+        return min(100, max(0, v))
+
+    def set_se_volume(self, volume: int) -> None:
+        self.set("se_volume", min(100, max(0, int(volume))))
+
+    @property
+    def se_on_batch_complete(self) -> bool:
+        return bool(self.get("se_on_batch_complete"))
+
+    def set_se_on_batch_complete(self, enabled: bool) -> None:
+        self.set("se_on_batch_complete", enabled)
