@@ -47,3 +47,6 @@ tools/__pycache__/
 
 # pytest キャッシュ
 .pytest_cache/
+
+# AI関連
+.claude/
