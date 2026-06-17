@@ -1,0 +1,11 @@
+{
+    "_comment": "このファイルをコピーして discord_bot_config.json という名前で保存し、各値を設定してください。",
+
+    "token": "ここにBotトークンを貼り付け",
+
+    "channel_ids": [],
+
+    "runtime_root": "C:/makeAiFactory/runtime",
+
+    "max_queue_size": 5
+}

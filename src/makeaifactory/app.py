@@ -16,6 +16,7 @@ from .gui.icon_data import app_icon
 
 from .constants import APP_NAME, SUPPORTED_IMAGE_EXTENSIONS
 from .core.app_controller import AppController
+from .core.bot_state import write_bot_state
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
 from .core.paths import AppPaths, _exe_dir
@@ -254,6 +255,7 @@ def run_app() -> int:
         window.update_preset_menu(installed_presets, model_preset)
         window.set_sage_attention_available(sage_attention_available)
         window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
+        write_bot_state(paths.runtime_root, "idle", ctrl.comfy_port)
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
@@ -266,11 +268,13 @@ def run_app() -> int:
 
     @Slot(Path, str, float, float, float)
     def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
+        write_bot_state(paths.runtime_root, "idle")
         window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
         _play_complete_se()
 
     @Slot()
     def _on_job_cancelled() -> None:
+        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -286,6 +290,7 @@ def run_app() -> int:
 
     @Slot(int, int, float)
     def _on_batch_done(completed: int, total: int, elapsed_sec: float) -> None:
+        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.hide_finish_current_btn()
@@ -309,6 +314,7 @@ def run_app() -> int:
 
     @Slot(str, str, str, bool)
     def _on_error(title: str, msg: str, detail: str, show_repair: bool) -> None:
+        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -476,6 +482,7 @@ def run_app() -> int:
 
     @Slot(Path)
     def _on_image_dropped(path: Path) -> None:
+        write_bot_state(paths.runtime_root, "single")
         window.enter_single_mode(path)
         window.update_single_progress("生成を準備しています...", 0.0, -1.0)
 
@@ -500,6 +507,7 @@ def run_app() -> int:
         input_folder = dlg.input_folder()
         output_folder = dlg.output_folder()
 
+        write_bot_state(paths.runtime_root, "batch")
         _batch_cancel.clear()
         _batch_finish_after_current.clear()
 

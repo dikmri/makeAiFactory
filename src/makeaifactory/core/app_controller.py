@@ -94,6 +94,10 @@ class AppController:
         return "\n".join(lines)
 
     @property
+    def comfy_port(self) -> int:
+        return self._server.port if self._server else 0
+
+    @property
     def sage_attention_available(self) -> bool:
         # manifestのenabledを常に正とする。過去にインストール確認済みでも
         # manifest側でenabled=falseにした時点で即座にGUI表示にも反映する。

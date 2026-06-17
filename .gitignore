@@ -50,3 +50,6 @@ tools/__pycache__/
 
 # AI関連
 .claude/
+
+# Discord Bot（トークンが含まれるため）
+discord_bot_config.json
