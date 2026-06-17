@@ -221,6 +221,9 @@ class DiscordSettingsDialog(QDialog):
         self.update_bot_status(result)
         self._test_btn.setEnabled(True)
         self._save_btn.setEnabled(True)
+        # 接続テスト成功時は「有効にする」を自動チェック（忘れ防止）
+        if "接続OK" in result:
+            self._enabled_cb.setChecked(True)
 
     def _parse_channel_ids(self) -> list:
         ids: list[int] = []

@@ -21,7 +21,7 @@ from ..comfy.api_client import ComfyApiClient
 from ..comfy.output_resolver import resolve_output_mp4
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
-from ..core.bot_state import read_bot_state
+from ..core.bot_state import read_bot_state, write_bot_state
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 
@@ -128,6 +128,8 @@ class DiscordBotController:
             status = f"接続完了: {user}"
             logger.info("Discord Bot 起動: %s", user)
             self._signals.status_changed.emit(status)
+            # bot_state.json を更新して「アイドル状態・準備完了」を記録する
+            write_bot_state(self._paths.runtime_root, "idle")
 
         @self._discord_client.event
         async def on_disconnect() -> None:
@@ -141,6 +143,7 @@ class DiscordBotController:
 
         self._signals.status_changed.emit("接続中...")
         worker_task = asyncio.create_task(self._worker())
+        state_task = asyncio.create_task(self._keep_state_alive())
         try:
             await self._discord_client.start(self._settings.discord_token)
         except Exception as e:
@@ -153,6 +156,7 @@ class DiscordBotController:
                 logger.error("Discord Bot エラー: %s", e)
         finally:
             worker_task.cancel()
+            state_task.cancel()
 
     # ── メッセージ受信 ─────────────────────────────────────────────────────
 
@@ -183,9 +187,8 @@ class DiscordBotController:
             )
             return
 
-        if state == "offline":
-            await message.reply("makeAiFactory が準備中か、エラーが発生しています。しばらく待ってからお試しください。")
-            return
+        # "offline" はタイムスタンプ期限切れを意味するが、アプリ内 Bot は
+        # 同一プロセスなので期限切れでも処理を続行する（comfy_port は _process で再確認）
 
         if self._queue.full():
             await message.reply("リクエストが集中しています。しばらく待ってからもう一度お試しください。")
@@ -198,6 +201,20 @@ class DiscordBotController:
             await message.reply(f"受け付けました。現在 {pos} 番目に並んでいます。しばらくお待ちください。")
 
         await self._queue.put((message, image_att))
+
+    # ── 状態ファイル定期更新 ───────────────────────────────────────────────
+
+    async def _keep_state_alive(self) -> None:
+        """bot_state.json のタイムスタンプを 90 秒ごとに更新する。
+
+        read_bot_state() は 5 分以上更新がないと "offline" を返すため、
+        Bot が接続済みでアイドル状態でも定期的に "idle" を書き続ける。
+        """
+        while True:
+            await asyncio.sleep(90)
+            if self._running:
+                write_bot_state(self._paths.runtime_root, "idle")
+                logger.debug("bot_state.json 更新 (keep-alive)")
 
     # ── ワーカーループ ─────────────────────────────────────────────────────
 
