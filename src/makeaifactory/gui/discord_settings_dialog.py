@@ -31,8 +31,6 @@ _DISCORD_API = "https://discord.com/api/v10/users/@me"
 
 
 class DiscordSettingsDialog(QDialog):
-    save_requested = Signal(bool, str, object)  # enabled, token, channel_ids (list[int])
-
     # テストスレッドから main thread への結果通知
     _test_result = Signal(str)
 
@@ -42,9 +40,16 @@ class DiscordSettingsDialog(QDialog):
         self.setMinimumWidth(500)
         self.setModal(True)
         self._settings = settings
+        self._save_callback = None  # set via set_save_callback()
         self._build_ui()
         self._test_result.connect(self._on_test_result)
         self._load_from_settings()
+
+    def set_save_callback(self, cb) -> None:
+        """保存ボタン押下時に呼び出すコールバックを登録する。
+        cb(enabled: bool, token: str, channel_ids: list[int]) の形式で呼ばれる。
+        """
+        self._save_callback = cb
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -170,9 +175,9 @@ class DiscordSettingsDialog(QDialog):
         enabled = self._enabled_cb.isChecked()
         token = self._token_edit.text().strip()
         channel_ids = self._parse_channel_ids()
-        # ダイアログは閉じずにそのまま表示（接続状態をここで確認できる）
         self.update_bot_status("保存中...")
-        self.save_requested.emit(enabled, token, channel_ids)
+        if self._save_callback:
+            self._save_callback(enabled, token, channel_ids)
 
     def _on_test_clicked(self) -> None:
         token = self._token_edit.text().strip()

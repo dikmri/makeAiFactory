@@ -330,6 +330,7 @@ def run_app() -> int:
     # ── Discord Bot ───────────────────────────────────────────────────────
 
     def _start_discord_bot() -> None:
+        logger.info("_start_discord_bot 開始 (既存ctrl=%s)", _discord["ctrl"] is not None)
         if _discord["ctrl"]:
             _discord["ctrl"].stop()
         bot = DiscordBotController(settings, paths)
@@ -398,26 +399,31 @@ def run_app() -> int:
                 dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
             )
 
-        def _handle_save(enabled: bool, token: str, channel_ids) -> None:
-            settings.set_discord_bot_enabled(enabled)
-            settings.set_discord_token(token)
-            settings.set_discord_channel_ids(list(channel_ids))
-            if enabled and token:
-                _start_discord_bot()
-                if _discord["ctrl"]:
-                    _discord["ctrl"].signals.status_changed.connect(
-                        dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
-                    )
-                dlg.update_bot_status("接続中...")
-                window.update_discord_status("接続中...")
-            else:
-                if _discord["ctrl"]:
-                    _discord["ctrl"].stop()
-                    _discord["ctrl"] = None
-                window.update_discord_status("停止")
-                dlg.update_bot_status("停止")
+        def _handle_save(enabled: bool, token: str, channel_ids: list) -> None:
+            logger.info("Discord 設定保存: enabled=%s, has_token=%s", enabled, bool(token))
+            try:
+                settings.set_discord_bot_enabled(enabled)
+                settings.set_discord_token(token)
+                settings.set_discord_channel_ids(list(channel_ids))
+                if enabled and token:
+                    _start_discord_bot()
+                    if _discord["ctrl"]:
+                        _discord["ctrl"].signals.status_changed.connect(
+                            dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
+                        )
+                    dlg.update_bot_status("接続中...")
+                    window.update_discord_status("接続中...")
+                else:
+                    if _discord["ctrl"]:
+                        _discord["ctrl"].stop()
+                        _discord["ctrl"] = None
+                    window.update_discord_status("停止")
+                    dlg.update_bot_status("停止")
+            except Exception as e:
+                logger.exception("Discord 設定保存中にエラー")
+                dlg.update_bot_status(f"エラー: {e}")
 
-        dlg.save_requested.connect(_handle_save)
+        dlg.set_save_callback(_handle_save)
         dlg.exec()
 
     signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
