@@ -28,6 +28,27 @@ from ..core.settings_store import SettingsStore
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _patch_broken_orjson() -> None:
+    """discord/utils.py は try/except ImportError で orjson をオプション使用するが、
+    PyInstaller が orjson.pyd を不完全収集すると AttributeError が素通りして
+    import discord 全体が失敗する。
+    orjson.loads が存在しない場合は sys.modules に None をセットして
+    次回の import orjson を ImportError にし、discord を標準 json にフォールバックさせる。
+    """
+    import sys
+    try:
+        import orjson as _orj
+        if not hasattr(_orj, 'loads'):
+            sys.modules['orjson'] = None  # type: ignore[assignment]
+            logger.warning("orjson が不完全バンドル (loads 欠落) のため除外 → discord が標準 json にフォールバック")
+    except ImportError:
+        pass
+
+
+_patch_broken_orjson()
+del _patch_broken_orjson
 _MAX_QUEUE_SIZE = 3
 
 
