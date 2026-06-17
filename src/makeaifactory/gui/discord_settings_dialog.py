@@ -189,17 +189,29 @@ class DiscordSettingsDialog(QDialog):
         try:
             req = urllib.request.Request(
                 _DISCORD_API,
-                headers={"Authorization": f"Bot {token}"},
+                headers={
+                    "Authorization": f"Bot {token}",
+                    # Discord API は DiscordBot 形式の User-Agent を要求する
+                    "User-Agent": "DiscordBot (https://github.com/dikmri/makeAiFactory, 1)",
+                },
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
                 username = data.get("username", "Unknown")
                 self._test_result.emit(f"接続OK: {username}")
         except urllib.error.HTTPError as e:
+            try:
+                body = json.loads(e.read().decode())
+                discord_msg = body.get("message", "")
+            except Exception:
+                discord_msg = ""
+            detail = f" ({discord_msg})" if discord_msg else ""
             if e.code == 401:
-                self._test_result.emit("エラー: トークンが無効です（401 Unauthorized）")
+                self._test_result.emit(f"エラー: トークンが無効です（401{detail}）")
+            elif e.code == 403:
+                self._test_result.emit(f"エラー: アクセス拒否（403{detail}）Bot設定を確認してください")
             else:
-                self._test_result.emit(f"エラー: HTTP {e.code}")
+                self._test_result.emit(f"エラー: HTTP {e.code}{detail}")
         except urllib.error.URLError as e:
             self._test_result.emit(f"エラー: ネットワークエラー ({e.reason})")
         except Exception as e:
