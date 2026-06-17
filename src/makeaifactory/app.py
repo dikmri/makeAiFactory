@@ -633,7 +633,11 @@ def run_app() -> int:
                     f"フォルダ生成 ({i + 1}/{total}) — ⚡ Discord 割り込み生成中...",
                     all_pct_so_far, 100.0, -1.0, "Discord からのリクエストを優先処理中",
                 )
-                while disc_ctrl.interrupt_active.is_set() and not _batch_cancel.is_set():
+                while disc_ctrl.interrupt_active.is_set():
+                    # 「次の動画で終了」はソフトキャンセルなので割り込み完了まで待つ。
+                    # ハードキャンセル（中断ボタン）のみ即時脱出する。
+                    if _batch_cancel.is_set() and not _batch_finish_after_current.is_set():
+                        break
                     await asyncio.sleep(0.5)
                 logger.info("Discord 割り込み完了 → バッチ再開")
 

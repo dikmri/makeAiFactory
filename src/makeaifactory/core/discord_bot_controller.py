@@ -29,6 +29,16 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
+# プリセット別の1動画あたり推定生成時間（分）
+_PRESET_WAIT_MIN: dict[str, int] = {"normal": 15, "lite": 10, "ultralite": 8}
+
+
+def _fmt_minutes(total_min: int) -> str:
+    if total_min < 60:
+        return f"約{total_min}分"
+    h, m = divmod(total_min, 60)
+    return f"約{h}時間{m}分" if m else f"約{h}時間"
+
 
 def _patch_broken_orjson() -> None:
     """discord/utils.py は try/except ImportError で orjson をオプション使用するが、
@@ -97,6 +107,31 @@ class DiscordBotController:
         self._batch_mode = active
         if not active:
             self._interrupt_active.clear()
+
+    def _receipt_msg(self, pos: int, is_interrupt: bool = False) -> str:
+        """受付時の Discord 返信メッセージを生成する。"""
+        preset = self._settings.model_preset
+        label = MODEL_PRESETS.get(preset, MODEL_PRESETS["normal"]).get("label", preset)
+        wait_min = pos * _PRESET_WAIT_MIN.get(preset, 12)
+        header = "⚡ 割り込み受付しました" if is_interrupt else "🏭 受付しました"
+        lines = [
+            header,
+            f"現在の待ち: {pos}件",
+            f"推定時間: {_fmt_minutes(wait_min)}",
+            f"使用プリセット: {label}",
+        ]
+        if is_interrupt:
+            lines.append("（現在の動画完了後に割り込み生成します）")
+        return "\n".join(lines)
+
+    def _done_msg(self, elapsed_sec: float) -> str:
+        """完成時の Discord 返信メッセージを生成する。"""
+        preset = self._settings.model_preset
+        label = MODEL_PRESETS.get(preset, MODEL_PRESETS["normal"]).get("label", preset)
+        mins = int(elapsed_sec // 60)
+        secs = int(elapsed_sec % 60)
+        time_str = f"{mins}分{secs}秒" if mins > 0 else f"{secs}秒"
+        return f"🎬 完成しました\n生成時間: {time_str}\nプリセット: {label}"
 
     def start(self) -> None:
         if self.is_running:
@@ -229,10 +264,7 @@ class DiscordBotController:
                     return
                 self._interrupt_active.set()
                 pos = self._queue.qsize() + 1
-                if pos == 1:
-                    await message.reply("⚡ 受け付けました。現在の動画完了後に割り込んで処理します。")
-                else:
-                    await message.reply(f"⚡ 受け付けました。割り込みキューの {pos} 番目に並んでいます。")
+                await message.reply(self._receipt_msg(pos, is_interrupt=True))
                 await self._queue.put((message, image_att))
                 return
             else:
@@ -248,11 +280,7 @@ class DiscordBotController:
             return
 
         pos = self._queue.qsize() + 1
-        if pos == 1:
-            await message.reply("受け付けました。生成を開始します...")
-        else:
-            await message.reply(f"受け付けました。現在 {pos} 番目に並んでいます。しばらくお待ちください。")
-
+        await message.reply(self._receipt_msg(pos, is_interrupt=False))
         await self._queue.put((message, image_att))
 
     # ── 状態ファイル定期更新 ───────────────────────────────────────────────
@@ -284,7 +312,11 @@ class DiscordBotController:
                 logger.exception("Discord 生成処理エラー")
                 self._signals.job_error.emit(str(e))
                 try:
-                    await message.reply(f"生成中にエラーが発生しました。\n`{e}`")
+                    await message.reply(
+                        "申し訳ありません🙏\n"
+                        "生成中にエラーが発生してしまいました。\n"
+                        "管理者にお知らせください。"
+                    )
                 except Exception:
                     pass
             finally:
@@ -302,7 +334,11 @@ class DiscordBotController:
         # デキュー直前の状態確認
         state, comfy_port = read_bot_state(self._paths.runtime_root)
         if state == "batch":
-            await message.reply("フォルダ生成が始まったため、このリクエストはキャンセルされました。")
+            await message.reply(
+                "申し訳ありません🙏\n"
+                "フォルダ生成が始まったため、このリクエストはキャンセルされてしまいました。\n"
+                "フォルダ生成が完了してから再度お試しください。"
+            )
             return
         if comfy_port == 0:
             await message.reply("ComfyUI のポートが不明です。アプリを再起動してください。")
@@ -313,21 +349,31 @@ class DiscordBotController:
         tmp_dir.mkdir(parents=True, exist_ok=True)
         image_path = tmp_dir / f"input{suffix}"
 
+        import time as _time
         try:
             await attachment.save(image_path)
             username = str(message.author.display_name)
             self._signals.job_started.emit(str(image_path), username)
 
+            gen_start = _time.monotonic()
             output_path = await self._generate_video(image_path, comfy_port)
+            elapsed = _time.monotonic() - gen_start
 
             self._signals.job_done.emit(str(output_path))
             import discord
-            await message.reply(file=discord.File(str(output_path), filename="output.mp4"))
+            await message.reply(
+                self._done_msg(elapsed),
+                file=discord.File(str(output_path), filename="output.mp4"),
+            )
             logger.info("Discord 返信完了: %s", output_path)
         except _CancelledError:
             self._signals.job_cancelled.emit()
             try:
-                await message.reply("生成がキャンセルされました。")
+                await message.reply(
+                    "申し訳ありません🙏\n"
+                    "生成がキャンセルされてしまいました。\n"
+                    "再度画像をお送りいただければ対応します。"
+                )
             except Exception:
                 pass
             raise
