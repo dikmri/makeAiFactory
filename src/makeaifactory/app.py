@@ -397,20 +397,28 @@ def run_app() -> int:
             _discord["ctrl"].signals.status_changed.connect(
                 dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
             )
-        dlg.save_requested.connect(_on_discord_settings_saved)
-        dlg.exec()
 
-    @Slot(bool, str, list)
-    def _on_discord_settings_saved(enabled: bool, token: str, channel_ids: list) -> None:
-        settings.set_discord_bot_enabled(enabled)
-        settings.set_discord_token(token)
-        settings.set_discord_channel_ids(channel_ids)
-        if enabled and token:
-            _start_discord_bot()
-        elif _discord["ctrl"]:
-            _discord["ctrl"].stop()
-            _discord["ctrl"] = None
-            window.update_discord_status("停止")
+        def _handle_save(enabled: bool, token: str, channel_ids) -> None:
+            settings.set_discord_bot_enabled(enabled)
+            settings.set_discord_token(token)
+            settings.set_discord_channel_ids(list(channel_ids))
+            if enabled and token:
+                _start_discord_bot()
+                if _discord["ctrl"]:
+                    _discord["ctrl"].signals.status_changed.connect(
+                        dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
+                    )
+                dlg.update_bot_status("接続中...")
+                window.update_discord_status("接続中...")
+            else:
+                if _discord["ctrl"]:
+                    _discord["ctrl"].stop()
+                    _discord["ctrl"] = None
+                window.update_discord_status("停止")
+                dlg.update_bot_status("停止")
+
+        dlg.save_requested.connect(_handle_save)
+        dlg.exec()
 
     signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
     signals.setup_ready.connect(_on_setup_ready,                Qt.ConnectionType.QueuedConnection)

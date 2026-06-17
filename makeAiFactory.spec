@@ -29,8 +29,8 @@ if _ws.exists():
 else:
     print(f'[WARN] websockets not found at {_ws}', file=sys.stderr)
 
-# httpx / pydantic / aiofiles
-for _pkg in ('httpx', 'pydantic', 'aiofiles'):
+# httpx / pydantic / aiofiles / discord
+for _pkg in ('httpx', 'pydantic', 'aiofiles', 'discord'):
     tmp_ret = collect_all(_pkg)
     datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

@@ -1,15 +1,21 @@
 """Discord Bot 設定ダイアログ。
 
 トークン・チャンネルID・有効/無効をアプリ UI で設定できる。
-save_requested シグナルで app.py に設定値を渡し、Bot の再起動を委譲する。
+「接続テスト」ボタンで Discord REST API を使ってトークンの有効性を確認できる。
+「保存して適用」後はダイアログを閉じずに接続状態をそのまま表示する。
 """
 from __future__ import annotations
+
+import json
+import threading
+import urllib.error
+import urllib.request
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,22 +27,28 @@ from PySide6.QtWidgets import (
 
 from ..core.settings_store import SettingsStore
 
+_DISCORD_API = "https://discord.com/api/v10/users/@me"
+
 
 class DiscordSettingsDialog(QDialog):
-    save_requested = Signal(bool, str, list)  # enabled, token, channel_ids(list[int])
+    save_requested = Signal(bool, str, object)  # enabled, token, channel_ids (list[int])
+
+    # テストスレッドから main thread への結果通知
+    _test_result = Signal(str)
 
     def __init__(self, settings: SettingsStore, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Discord Bot 設定")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(500)
         self.setModal(True)
         self._settings = settings
         self._build_ui()
+        self._test_result.connect(self._on_test_result)
         self._load_from_settings()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
         layout.setContentsMargins(20, 20, 20, 20)
 
         # ── 有効/無効チェックボックス ─────────────────────────────────
@@ -57,7 +69,7 @@ class DiscordSettingsDialog(QDialog):
 
         self._show_token_btn = QPushButton("表示")
         self._show_token_btn.setCheckable(True)
-        self._show_token_btn.setFixedWidth(60)
+        self._show_token_btn.setFixedWidth(56)
         self._show_token_btn.toggled.connect(self._on_show_token_toggled)
         token_row.addWidget(self._show_token_btn)
         layout.addLayout(token_row)
@@ -74,7 +86,7 @@ class DiscordSettingsDialog(QDialog):
         self._channels_edit.setPlaceholderText("例: 1234567890, 9876543210")
         layout.addWidget(self._channels_edit)
 
-        hint_ch = QLabel("ℹ  Discord 設定→詳細→開発者モードを有効化し、チャンネルを右クリック→IDをコピー")
+        hint_ch = QLabel("ℹ  Discord 設定→詳細設定→開発者モードを有効化し、チャンネルを右クリック→IDをコピー")
         hint_ch.setStyleSheet("color: #666; font-size: 11px;")
         hint_ch.setWordWrap(True)
         layout.addWidget(hint_ch)
@@ -83,35 +95,59 @@ class DiscordSettingsDialog(QDialog):
 
         # ── Bot 状態表示 ──────────────────────────────────────────────
         status_row = QHBoxLayout()
-        status_row.addWidget(QLabel("Bot 状態:"))
+        status_row.addWidget(self._make_label("Bot 状態:"))
         self._status_lbl = QLabel("未確認")
         self._status_lbl.setStyleSheet("color: #aaa; font-size: 12px;")
-        status_row.addWidget(self._status_lbl)
-        status_row.addStretch()
+        self._status_lbl.setWordWrap(True)
+        status_row.addWidget(self._status_lbl, stretch=1)
         layout.addLayout(status_row)
 
         layout.addSpacing(8)
 
-        # ── ボタン ────────────────────────────────────────────────────
-        btn_box = QDialogButtonBox()
+        # ── ボタン行 ─────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self._test_btn = QPushButton("接続テスト")
+        self._test_btn.setStyleSheet("""
+            QPushButton {
+                background: #0a2a1a; color: #66bb6a;
+                border: 1px solid #2e7d32; border-radius: 6px;
+                padding: 6px 16px; font-size: 13px;
+            }
+            QPushButton:hover { background: #0d3a24; border-color: #66bb6a; }
+            QPushButton:disabled { color: #444; border-color: #333; }
+        """)
+        self._test_btn.clicked.connect(self._on_test_clicked)
+
         self._save_btn = QPushButton("保存して適用")
         self._save_btn.setDefault(True)
         self._save_btn.setStyleSheet("""
             QPushButton {
                 background: #1a3060; color: #fff;
                 border: 1px solid #4fc3f7; border-radius: 6px;
-                padding: 6px 24px; font-size: 13px;
+                padding: 6px 20px; font-size: 13px;
             }
             QPushButton:hover { background: #253858; }
         """)
         self._save_btn.clicked.connect(self._on_save)
 
         close_btn = QPushButton("閉じる")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a1a2e; color: #ccc;
+                border: 1px solid #444; border-radius: 6px;
+                padding: 6px 16px; font-size: 13px;
+            }
+            QPushButton:hover { background: #253858; }
+        """)
         close_btn.clicked.connect(self.reject)
 
-        btn_box.addButton(self._save_btn, QDialogButtonBox.ButtonRole.AcceptRole)
-        btn_box.addButton(close_btn, QDialogButtonBox.ButtonRole.RejectRole)
-        layout.addWidget(btn_box)
+        btn_row.addWidget(self._test_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self._save_btn)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
 
     @staticmethod
     def _make_label(text: str) -> QLabel:
@@ -133,21 +169,64 @@ class DiscordSettingsDialog(QDialog):
     def _on_save(self) -> None:
         enabled = self._enabled_cb.isChecked()
         token = self._token_edit.text().strip()
-        raw_ids = self._channels_edit.text()
-        channel_ids: list[int] = []
-        for part in raw_ids.split(","):
+        channel_ids = self._parse_channel_ids()
+        # ダイアログは閉じずにそのまま表示（接続状態をここで確認できる）
+        self.update_bot_status("保存中...")
+        self.save_requested.emit(enabled, token, channel_ids)
+
+    def _on_test_clicked(self) -> None:
+        token = self._token_edit.text().strip()
+        if not token:
+            self.update_bot_status("エラー: トークンを入力してください")
+            return
+        self.update_bot_status("テスト中...")
+        self._test_btn.setEnabled(False)
+        self._save_btn.setEnabled(False)
+        t = threading.Thread(target=self._run_test, args=(token,), daemon=True)
+        t.start()
+
+    def _run_test(self, token: str) -> None:
+        try:
+            req = urllib.request.Request(
+                _DISCORD_API,
+                headers={"Authorization": f"Bot {token}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                username = data.get("username", "Unknown")
+                self._test_result.emit(f"接続OK: {username}")
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                self._test_result.emit("エラー: トークンが無効です（401 Unauthorized）")
+            else:
+                self._test_result.emit(f"エラー: HTTP {e.code}")
+        except urllib.error.URLError as e:
+            self._test_result.emit(f"エラー: ネットワークエラー ({e.reason})")
+        except Exception as e:
+            self._test_result.emit(f"エラー: {e}")
+
+    def _on_test_result(self, result: str) -> None:
+        self.update_bot_status(result)
+        self._test_btn.setEnabled(True)
+        self._save_btn.setEnabled(True)
+
+    def _parse_channel_ids(self) -> list:
+        ids: list[int] = []
+        for part in self._channels_edit.text().split(","):
             part = part.strip()
             if part.isdigit():
-                channel_ids.append(int(part))
-        self.save_requested.emit(enabled, token, channel_ids)
-        self.accept()
+                ids.append(int(part))
+        return ids
 
     def update_bot_status(self, status_text: str) -> None:
         """Bot の状態ラベルをリアルタイム更新する。DiscordBotSignals.status_changed に接続する。"""
-        self._status_lbl.setText(status_text)
-        if "接続完了" in status_text:
-            self._status_lbl.setStyleSheet("color: #66bb6a; font-size: 12px;")
+        if "接続OK" in status_text or "接続完了" in status_text:
+            color = "#66bb6a"
         elif "エラー" in status_text or "無効" in status_text:
-            self._status_lbl.setStyleSheet("color: #f88; font-size: 12px;")
+            color = "#f88"
+        elif "テスト中" in status_text or "接続中" in status_text or "保存中" in status_text:
+            color = "#ffa726"
         else:
-            self._status_lbl.setStyleSheet("color: #aaa; font-size: 12px;")
+            color = "#aaa"
+        self._status_lbl.setStyleSheet(f"color: {color}; font-size: 12px;")
+        self._status_lbl.setText(status_text)
