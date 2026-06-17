@@ -25,6 +25,14 @@ _DEFAULTS = {
     "discord_token": "",
     "discord_channel_ids": [],      # list[int]
     "discord_bot_interrupt": False, # フォルダ生成中に Discord リクエストを割り込ませる
+    "remote_room": {
+        "room_ttl_minutes": 180,
+        "require_pin": True,
+        "max_upload_mb": 20,
+        "max_queue_size": 3,
+        "per_session_cooldown_seconds": 600,
+        "output_retention_hours": 24,
+    },
 }
 
 
@@ -194,3 +202,11 @@ class SettingsStore:
 
     def set_dev_mode_params(self, params: dict) -> None:
         self.set("dev_mode_params", params)
+
+    @property
+    def remote_room_config(self) -> dict:
+        v = self.get("remote_room")
+        return v if isinstance(v, dict) else {}
+
+    def set_remote_room_config(self, config: dict) -> None:
+        self.set("remote_room", config)

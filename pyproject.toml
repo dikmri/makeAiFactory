@@ -1,6 +1,6 @@
 [project]
 name = "makeaifactory"
-version = "0.9.1"
+version = "1.0.0"
 description = "ComfyUI/Wan2.2を隠蔽したD&D動画生成アプリ"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,6 +10,9 @@ dependencies = [
     "pydantic>=2.7.0",
     "aiofiles>=23.2.1",
     "discord.py>=2.3",
+    "aiohttp>=3.10",
+    "Pillow>=10.0",
+    "qrcode>=7.4",
 ]
 dev = [
     "pyinstaller>=6.8.0",

@@ -51,6 +51,9 @@ from .gui.discord_settings_dialog import DiscordSettingsDialog
 from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
 from .gui.main_window import MainWindow
+from .gui.remote_room_dialog import RemoteRoomDialog
+from .remote_room.controller import RemoteRoomController
+from .remote_room.room_config import RemoteRoomConfig
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +234,9 @@ def run_app() -> int:
 
     # Discord Bot コントローラ（起動後に設定）
     _discord: dict = {"ctrl": None, "generating": False, "batch_running": False, "batch_all_pct": 0.0}
+
+    # Remote Room コントローラ
+    _remote_room: dict = {"ctrl": None, "dlg": None}
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
@@ -463,6 +469,70 @@ def run_app() -> int:
 
         dlg.set_save_callback(_handle_save)
         dlg.exec()
+
+    # ── Remote Room ───────────────────────────────────────────────────────
+
+    @Slot()
+    def _on_remote_room_requested() -> None:
+        dlg = _remote_room.get("dlg")
+        if dlg is None or not dlg.isVisible():
+            dlg = RemoteRoomDialog(window)
+            _remote_room["dlg"] = dlg
+
+            def _handle_start(config_dict: dict) -> None:
+                ctrl = _remote_room.get("ctrl")
+                if ctrl and ctrl.is_running:
+                    return
+                cfg = RemoteRoomConfig.from_dict(config_dict)
+                ctrl = RemoteRoomController(settings, paths)
+                _remote_room["ctrl"] = ctrl
+                sig = ctrl.signals
+                sig.status_changed.connect(dlg.update_status, Qt.ConnectionType.QueuedConnection)
+                sig.public_url_ready.connect(dlg.set_public_url, Qt.ConnectionType.QueuedConnection)
+                sig.stats_changed.connect(dlg.update_stats, Qt.ConnectionType.QueuedConnection)
+                sig.error.connect(dlg.show_error_msg, Qt.ConnectionType.QueuedConnection)
+                sig.job_started.connect(_on_remote_job_started, Qt.ConnectionType.QueuedConnection)
+                sig.job_progress.connect(_on_remote_job_progress, Qt.ConnectionType.QueuedConnection)
+                sig.job_done.connect(_on_remote_job_done, Qt.ConnectionType.QueuedConnection)
+                sig.job_error.connect(_on_remote_job_error, Qt.ConnectionType.QueuedConnection)
+                settings.set_remote_room_config(config_dict)
+                ctrl.start(cfg)
+                dlg.update_status("starting", "起動中...")
+
+            def _handle_stop() -> None:
+                ctrl = _remote_room.get("ctrl")
+                if ctrl:
+                    ctrl.stop()
+                    _remote_room["ctrl"] = None
+
+            dlg.set_start_callback(_handle_start)
+            dlg.set_stop_callback(_handle_stop)
+            dlg.stop_accepting.connect(lambda: _remote_room["ctrl"].stop_accepting() if _remote_room["ctrl"] else None)
+            dlg.cancel_job.connect(lambda: _remote_room["ctrl"].cancel_current_job() if _remote_room["ctrl"] else None)
+            dlg.clear_queue.connect(lambda: _remote_room["ctrl"].clear_queue() if _remote_room["ctrl"] else None)
+
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    @Slot(str, str)
+    def _on_remote_job_started(job_id: str, image_path: str) -> None:
+        logger.info("Remote Room ジョブ開始: %s", job_id)
+        window.update_status(f"🌐 投入口 生成中: #{job_id[:6]}")
+
+    @Slot(str, float, str)
+    def _on_remote_job_progress(job_id: str, pct: float, label: str) -> None:
+        pass  # ダイアログ側の stats 表示で把握できるため app の progress view は更新しない
+
+    @Slot(str, str)
+    def _on_remote_job_done(job_id: str, output_path: str) -> None:
+        logger.info("Remote Room ジョブ完了: %s → %s", job_id, output_path)
+        _play_complete_se()
+        window.update_status(f"🌐 投入口 完了: #{job_id[:6]}")
+
+    @Slot(str, str)
+    def _on_remote_job_error(job_id: str, msg: str) -> None:
+        logger.error("Remote Room ジョブエラー: %s — %s", job_id, msg)
 
     @Slot()
     def _on_dev_mode_requested() -> None:
@@ -714,6 +784,7 @@ def run_app() -> int:
     window.batch_requested.connect(_on_batch_requested,          Qt.ConnectionType.QueuedConnection)
     window.discord_settings_requested.connect(_on_discord_settings_requested, Qt.ConnectionType.QueuedConnection)
     window.dev_mode_requested.connect(_on_dev_mode_requested,    Qt.ConnectionType.QueuedConnection)
+    window.remote_room_requested.connect(_on_remote_room_requested, Qt.ConnectionType.QueuedConnection)
 
     window.show_progress_indeterminate("セットアップを確認しています...")
     window.show()
@@ -725,6 +796,8 @@ def run_app() -> int:
     ctrl.stop_server()
     if _discord["ctrl"]:
         _discord["ctrl"].stop()
+    if _remote_room["ctrl"]:
+        _remote_room["ctrl"].stop()
     return result
 
 

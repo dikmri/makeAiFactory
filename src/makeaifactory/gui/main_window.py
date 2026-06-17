@@ -38,6 +38,7 @@ class MainWindow(QMainWindow):
     batch_requested = Signal()
     discord_settings_requested = Signal()
     dev_mode_requested = Signal()
+    remote_room_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -209,6 +210,10 @@ class MainWindow(QMainWindow):
         discord_action = QAction("Discord Bot 設定...", self)
         discord_action.triggered.connect(self.discord_settings_requested)
         settings_menu.addAction(discord_action)
+
+        remote_room_action = QAction("インターネット投入口 β...", self)
+        remote_room_action.triggered.connect(self.remote_room_requested)
+        settings_menu.addAction(remote_room_action)
 
         settings_menu.addSeparator()
         se_menu = settings_menu.addMenu("完成通知音")
