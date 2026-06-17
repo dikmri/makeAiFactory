@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -35,6 +36,7 @@ _PAGE_RESULT = 2
 class MainWindow(QMainWindow):
     image_dropped = Signal(Path)
     batch_requested = Signal()
+    discord_settings_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -126,6 +128,10 @@ class MainWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
 
+        self._discord_status_lbl = QLabel("Discord Bot: 未設定")
+        self._discord_status_lbl.setStyleSheet("color: #555; font-size: 11px; padding: 0 8px;")
+        self._status_bar.addPermanentWidget(self._discord_status_lbl)
+
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
 
@@ -197,6 +203,11 @@ class MainWindow(QMainWindow):
         self._sage_attention_action.triggered.connect(self._on_sage_attention_toggled)
         settings_menu.addAction(self._sage_attention_action)
         self._sage_attention_callback = None
+
+        settings_menu.addSeparator()
+        discord_action = QAction("Discord Bot 設定...", self)
+        discord_action.triggered.connect(self.discord_settings_requested)
+        settings_menu.addAction(discord_action)
 
         settings_menu.addSeparator()
         se_menu = settings_menu.addMenu("完成通知音")
@@ -518,6 +529,23 @@ class MainWindow(QMainWindow):
 
     def update_status(self, message: str) -> None:
         self._status_bar.showMessage(message)
+
+    def update_discord_status(self, status_text: str) -> None:
+        """Discord Bot の状態をステータスバー右端に反映する。"""
+        if "接続完了" in status_text:
+            color = "#66bb6a"
+            indicator = "●"
+        elif "エラー" in status_text or "無効" in status_text:
+            color = "#f88"
+            indicator = "●"
+        elif "接続中" in status_text or "再接続" in status_text:
+            color = "#ffa726"
+            indicator = "○"
+        else:
+            color = "#555"
+            indicator = "○"
+        self._discord_status_lbl.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 8px;")
+        self._discord_status_lbl.setText(f"Discord Bot: {indicator} {status_text}")
 
     def start_elapsed_timer(self) -> None:
         self._progress_view.start_elapsed()

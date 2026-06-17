@@ -29,3 +29,19 @@ def write_bot_state(runtime_root: Path, state: str, port: int = 0) -> None:
         )
     except Exception as e:
         logger.debug("bot_state.json 書き込み失敗: %s", e)
+
+
+def read_bot_state(runtime_root: Path) -> tuple[str, int]:
+    """bot_state.json から (state, comfy_port) を読む。
+    5分以上更新されていない場合は "offline"。
+    """
+    path = runtime_root / _STATE_FILENAME
+    if not path.exists():
+        return "offline", 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - data.get("updated_at", 0) > 300:
+            return "offline", data.get("port", 0)
+        return data.get("state", "offline"), data.get("port", 0)
+    except Exception:
+        return "offline", 0

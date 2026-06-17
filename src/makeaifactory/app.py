@@ -44,7 +44,9 @@ def _job_overall_pct(p: JobProgress) -> float:
 def _task_pct(p: JobProgress) -> float:
     """現在のステップバーに表示する進捗。生成中以外は不定 (-1)。"""
     return p.percent if p.state == JobState.GENERATING else -1.0
+from .core.discord_bot_controller import DiscordBotController
 from .gui.batch_dialog import BatchDialog
+from .gui.discord_settings_dialog import DiscordSettingsDialog
 from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
 from .gui.main_window import MainWindow
@@ -226,6 +228,9 @@ def run_app() -> int:
 
     signals = _AsyncSignals()
 
+    # Discord Bot コントローラ（起動後に設定）
+    _discord: dict = {"ctrl": None, "generating": False}
+
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
     # 「現在の生成で終了」フラグ — キャンセルと区別するためだけに使う
@@ -256,6 +261,8 @@ def run_app() -> int:
         window.set_sage_attention_available(sage_attention_available)
         window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
         write_bot_state(paths.runtime_root, "idle", ctrl.comfy_port)
+        if settings.discord_bot_enabled and settings.discord_token:
+            _start_discord_bot()
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
@@ -319,6 +326,91 @@ def run_app() -> int:
         window.hide_cancel_btn()
         window.show_drop_page()
         window.show_error(title, msg, detail, show_repair)
+
+    # ── Discord Bot ───────────────────────────────────────────────────────
+
+    def _start_discord_bot() -> None:
+        if _discord["ctrl"]:
+            _discord["ctrl"].stop()
+        bot = DiscordBotController(settings, paths)
+        _discord["ctrl"] = bot
+        sig = bot.signals
+        sig.job_started.connect(_on_discord_job_started,   Qt.ConnectionType.QueuedConnection)
+        sig.job_progress.connect(_on_discord_job_progress, Qt.ConnectionType.QueuedConnection)
+        sig.job_done.connect(_on_discord_job_done,         Qt.ConnectionType.QueuedConnection)
+        sig.job_cancelled.connect(_on_discord_job_cancelled, Qt.ConnectionType.QueuedConnection)
+        sig.job_error.connect(_on_discord_job_error,       Qt.ConnectionType.QueuedConnection)
+        sig.status_changed.connect(window.update_discord_status, Qt.ConnectionType.QueuedConnection)
+        bot.start()
+
+    @Slot(str, str)
+    def _on_discord_job_started(image_path: str, username: str) -> None:
+        _discord["generating"] = True
+        write_bot_state(paths.runtime_root, "single")
+        window.enter_single_mode(Path(image_path))
+        window.update_single_progress(f"Discord: @{username}", 0.0, -1.0)
+
+        def _do_discord_cancel() -> None:
+            if _discord["ctrl"]:
+                _discord["ctrl"].cancel_current_job()
+            window.update_status("Discord 生成をキャンセル中...")
+
+        window.show_cancel_btn(_do_discord_cancel)
+        logger.info("Discord ジョブ開始: @%s %s", username, image_path)
+
+    @Slot(float, str)
+    def _on_discord_job_progress(pct: float, msg: str) -> None:
+        if _discord["generating"]:
+            window.update_single_progress(msg, pct, pct)
+
+    @Slot(str)
+    def _on_discord_job_done(output_path: str) -> None:
+        _discord["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.show_result(Path(output_path))
+        _play_complete_se()
+        logger.info("Discord ジョブ完了: %s", output_path)
+
+    @Slot()
+    def _on_discord_job_cancelled() -> None:
+        _discord["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        window.update_status("Discord からの生成をキャンセルしました")
+
+    @Slot(str)
+    def _on_discord_job_error(msg: str) -> None:
+        _discord["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        window.update_status(f"Discord 生成エラー: {msg}")
+        logger.error("Discord ジョブエラー: %s", msg)
+
+    @Slot()
+    def _on_discord_settings_requested() -> None:
+        dlg = DiscordSettingsDialog(settings, window)
+        if _discord["ctrl"]:
+            _discord["ctrl"].signals.status_changed.connect(
+                dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
+            )
+        dlg.save_requested.connect(_on_discord_settings_saved)
+        dlg.exec()
+
+    @Slot(bool, str, list)
+    def _on_discord_settings_saved(enabled: bool, token: str, channel_ids: list) -> None:
+        settings.set_discord_bot_enabled(enabled)
+        settings.set_discord_token(token)
+        settings.set_discord_channel_ids(channel_ids)
+        if enabled and token:
+            _start_discord_bot()
+        elif _discord["ctrl"]:
+            _discord["ctrl"].stop()
+            _discord["ctrl"] = None
+            window.update_discord_status("停止")
 
     signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
     signals.setup_ready.connect(_on_setup_ready,                Qt.ConnectionType.QueuedConnection)
@@ -532,8 +624,9 @@ def run_app() -> int:
         pool = QThreadPool.globalInstance()
         pool.start(_Worker(_run_batch(input_folder, output_folder), signals))
 
-    window.image_dropped.connect(_on_image_dropped, Qt.ConnectionType.QueuedConnection)
-    window.batch_requested.connect(_on_batch_requested, Qt.ConnectionType.QueuedConnection)
+    window.image_dropped.connect(_on_image_dropped,              Qt.ConnectionType.QueuedConnection)
+    window.batch_requested.connect(_on_batch_requested,          Qt.ConnectionType.QueuedConnection)
+    window.discord_settings_requested.connect(_on_discord_settings_requested, Qt.ConnectionType.QueuedConnection)
 
     window.show_progress_indeterminate("セットアップを確認しています...")
     window.show()
@@ -543,6 +636,8 @@ def run_app() -> int:
 
     result = app.exec()
     ctrl.stop_server()
+    if _discord["ctrl"]:
+        _discord["ctrl"].stop()
     return result
 
 

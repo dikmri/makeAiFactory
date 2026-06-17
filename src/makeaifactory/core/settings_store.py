@@ -21,6 +21,9 @@ _DEFAULTS = {
     "se_volume": 75,                # 完成通知音の音量 (0-100)
     "se_on_batch_complete": True,   # フォルダ(バッチ)生成完了時にも通知音を鳴らすか
     "always_on_top": False,         # ウィンドウを常に最前面に表示するか
+    "discord_bot_enabled": False,
+    "discord_token": "",
+    "discord_channel_ids": [],      # list[int]
 }
 
 
@@ -151,3 +154,27 @@ class SettingsStore:
 
     def set_always_on_top(self, enabled: bool) -> None:
         self.set("always_on_top", enabled)
+
+    @property
+    def discord_bot_enabled(self) -> bool:
+        return bool(self.get("discord_bot_enabled"))
+
+    def set_discord_bot_enabled(self, enabled: bool) -> None:
+        self.set("discord_bot_enabled", enabled)
+
+    @property
+    def discord_token(self) -> str:
+        return str(self.get("discord_token") or "")
+
+    def set_discord_token(self, token: str) -> None:
+        self.set("discord_token", token)
+
+    @property
+    def discord_channel_ids(self) -> list[int]:
+        v = self.get("discord_channel_ids")
+        if isinstance(v, list):
+            return [int(x) for x in v if isinstance(x, (int, float)) and int(x) > 0]
+        return []
+
+    def set_discord_channel_ids(self, ids: list[int]) -> None:
+        self.set("discord_channel_ids", [int(x) for x in ids])
