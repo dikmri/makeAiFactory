@@ -227,6 +227,8 @@ def run_app() -> int:
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
+    # 「現在の生成で終了」フラグ — キャンセルと区別するためだけに使う
+    _batch_finish_after_current = threading.Event()
     # 単体生成キャンセル用フラグ（スレッドセーフ）
     _single_cancel = threading.Event()
 
@@ -286,13 +288,18 @@ def run_app() -> int:
     def _on_batch_done(completed: int, total: int, elapsed_sec: float) -> None:
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
+        window.hide_finish_current_btn()
         mins = int(elapsed_sec // 60)
         secs = int(elapsed_sec % 60)
         time_str = f"{mins}分{secs}秒" if mins > 0 else f"{secs}秒"
         cancelled = _batch_cancel.is_set()
-        if cancelled:
+        finish_after = _batch_finish_after_current.is_set()
+        if cancelled and not finish_after:
             title = "バッチ処理を中断しました"
             msg = f"{completed}/{total}枚 を処理して中断しました\n経過時間: {time_str}"
+        elif cancelled and finish_after:
+            title = "バッチ処理を停止しました"
+            msg = f"{completed}/{total}枚 を処理して停止しました\n経過時間: {time_str}"
         else:
             title = "バッチ処理が完了しました"
             msg = f"{completed}枚 の動画を生成しました\n経過時間: {time_str}"
@@ -448,7 +455,10 @@ def run_app() -> int:
                 shutil.copy2(str(output), str(output_folder / f"{image_path.stem}.mp4"))
                 completed += 1
             except Exception as e:
-                logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
+                if _batch_cancel.is_set():
+                    logger.info("バッチ生成中断 (%s)", image_path.name)
+                else:
+                    logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
 
         elapsed = time.monotonic() - start
         signals.batch_done.emit(completed, total, elapsed)
@@ -491,16 +501,25 @@ def run_app() -> int:
         output_folder = dlg.output_folder()
 
         _batch_cancel.clear()
+        _batch_finish_after_current.clear()
 
         def _do_cancel() -> None:
             _batch_cancel.set()
             window.update_status("中断中...")
+            window.hide_finish_current_btn()
             pool = QThreadPool.globalInstance()
             pool.start(_Worker(_cancel_current_job(), signals))
+
+        def _do_finish_after_current() -> None:
+            _batch_cancel.set()
+            _batch_finish_after_current.set()
+            window.update_status("現在の生成が完了したら停止します...")
+            window.hide_finish_current_btn()
 
         window.enter_batch_mode()
         window.update_batch_progress("フォルダ生成を開始しています...", 0.0, 0.0, -1.0)
         window.show_cancel_btn(_do_cancel)
+        window.show_finish_current_btn(_do_finish_after_current)
 
         pool = QThreadPool.globalInstance()
         pool.start(_Worker(_run_batch(input_folder, output_folder), signals))

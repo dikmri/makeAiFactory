@@ -430,11 +430,18 @@ class MainWindow(QMainWindow):
         logger.info("クリップボードから画像を貼り付け: %s (%dx%d)", tmp, img.width(), img.height())
         self.image_dropped.emit(tmp)
 
+    def show_finish_current_btn(self, callback) -> None:
+        self._progress_view.show_finish_current(callback)
+
+    def hide_finish_current_btn(self) -> None:
+        self._progress_view.hide_finish_current()
+
     @Slot()
     def show_drop_page(self) -> None:
         self._result_view.stop_playback()
         self._progress_view.stop_elapsed()
         self._progress_view.hide_cancel()
+        self._progress_view.hide_finish_current()
         self._drop_area.set_ready()
         self._stack.setCurrentIndex(_PAGE_DROP)
         self._status_bar.clearMessage()

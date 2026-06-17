@@ -142,6 +142,19 @@ class ProgressView(QWidget):
         self._eta.setStyleSheet("color: #888; font-size: 12px;")
         layout.addWidget(self._eta)
 
+        # ── 現在の生成で終了ボタン（バッチ専用）────────────────────────────
+        self._finish_current_btn = QPushButton("現在の生成で終了")
+        self._finish_current_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a1500; color: #ffa726;
+                border: 1px solid #7a5900; border-radius: 6px;
+                padding: 6px 24px; font-size: 13px;
+            }
+            QPushButton:hover { background: #2a2100; border-color: #ffc107; color: #ffd54f; }
+        """)
+        self._finish_current_btn.setVisible(False)
+        layout.addWidget(self._finish_current_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
         # ── 中断ボタン ────────────────────────────────────────────────────
         self._cancel_btn = QPushButton("中断")
         self._cancel_btn.setStyleSheet("""
@@ -208,6 +221,7 @@ class ProgressView(QWidget):
     def _apply_setup_layout(self) -> None:
         self._img_preview.setVisible(False)
         self._img_name.setVisible(False)
+        self._finish_current_btn.setVisible(False)
         self._lbl1.setText("進捗")
         self._lbl1.setVisible(True)
         self._bar1.setVisible(True)
@@ -219,6 +233,7 @@ class ProgressView(QWidget):
         self._mode = self._SINGLE
         self._overall_pct = 0.0
         self._start_mono = time.monotonic()
+        self._finish_current_btn.setVisible(False)
         self._lbl1.setText("全体進捗")
         self._bar1.setRange(0, 100)
         self._bar1.setValue(0)
@@ -344,6 +359,17 @@ class ProgressView(QWidget):
         self.stop()
 
     # ── 中断ボタン ────────────────────────────────────────────────────────
+
+    def show_finish_current(self, callback) -> None:
+        try:
+            self._finish_current_btn.clicked.disconnect()
+        except RuntimeError:
+            pass
+        self._finish_current_btn.clicked.connect(callback)
+        self._finish_current_btn.setVisible(True)
+
+    def hide_finish_current(self) -> None:
+        self._finish_current_btn.setVisible(False)
 
     def show_cancel(self, callback) -> None:
         try:

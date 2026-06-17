@@ -17,7 +17,7 @@ from ..comfy.server_controller import ComfyServerController
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..core.vram_monitor import RamMonitor, VramMonitor
-from ..domain.errors import OutputNotFoundError
+from ..domain.errors import MakeAiFactoryError, OutputNotFoundError
 from ..domain.job import Job
 from ..domain.progress import BenchmarkResult, JobProgress, JobState
 
@@ -128,6 +128,9 @@ class JobController:
                 tracker.handle_event(event)
                 if event.event_type == "execution_error":
                     break
+
+        if job.status == JobState.CANCELLED:
+            raise MakeAiFactoryError("生成がキャンセルされました")
 
         # history 取得
         job.status = JobState.RESOLVING_OUTPUT
