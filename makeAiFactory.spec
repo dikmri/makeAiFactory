@@ -44,7 +44,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['orjson'],  # discord.py が orjson を try/except でオプション使用するため除外し標準jsonにフォールバックさせる
     noarchive=False,
     optimize=0,
 )
