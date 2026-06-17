@@ -186,3 +186,11 @@ class SettingsStore:
 
     def set_discord_bot_interrupt(self, enabled: bool) -> None:
         self.set("discord_bot_interrupt", enabled)
+
+    @property
+    def dev_mode_params(self) -> dict:
+        v = self.get("dev_mode_params")
+        return v if isinstance(v, dict) else {}
+
+    def set_dev_mode_params(self, params: dict) -> None:
+        self.set("dev_mode_params", params)

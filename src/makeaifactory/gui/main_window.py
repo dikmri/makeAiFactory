@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
     image_dropped = Signal(Path)
     batch_requested = Signal()
     discord_settings_requested = Signal()
+    dev_mode_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -240,6 +241,13 @@ class MainWindow(QMainWindow):
         self._se_volume_callback = None
 
         help_menu = menu_bar.addMenu("ヘルプ")
+
+        dev_action = QAction("開発モード", self)
+        dev_action.setShortcut("Ctrl+Shift+D")
+        dev_action.triggered.connect(self.dev_mode_requested)
+        help_menu.addAction(dev_action)
+        help_menu.addSeparator()
+
         log_action = QAction("ログを開く", self)
         log_action.triggered.connect(self._open_logs)
         help_menu.addAction(log_action)

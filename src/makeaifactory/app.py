@@ -46,6 +46,7 @@ def _task_pct(p: JobProgress) -> float:
     return p.percent if p.state == JobState.GENERATING else -1.0
 from .core.discord_bot_controller import DiscordBotController
 from .gui.batch_dialog import BatchDialog
+from .gui.dev_mode_dialog import DevModeDialog
 from .gui.discord_settings_dialog import DiscordSettingsDialog
 from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
@@ -463,6 +464,20 @@ def run_app() -> int:
         dlg.set_save_callback(_handle_save)
         dlg.exec()
 
+    @Slot()
+    def _on_dev_mode_requested() -> None:
+        async def _run_job_fn(image_path: Path, overrides, on_progress):
+            job_ctrl = ctrl.get_job_controller()
+            return await job_ctrl.run_job(image_path, on_progress=on_progress, dev_overrides=overrides)
+
+        dlg = DevModeDialog(
+            run_job_fn=_run_job_fn,
+            save_params_fn=settings.set_dev_mode_params,
+            load_params=settings.dev_mode_params,
+            parent=window,
+        )
+        dlg.show()
+
     signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
     signals.setup_ready.connect(_on_setup_ready,                Qt.ConnectionType.QueuedConnection)
     signals.job_progress.connect(_on_job_progress,              Qt.ConnectionType.QueuedConnection)
@@ -694,6 +709,7 @@ def run_app() -> int:
     window.image_dropped.connect(_on_image_dropped,              Qt.ConnectionType.QueuedConnection)
     window.batch_requested.connect(_on_batch_requested,          Qt.ConnectionType.QueuedConnection)
     window.discord_settings_requested.connect(_on_discord_settings_requested, Qt.ConnectionType.QueuedConnection)
+    window.dev_mode_requested.connect(_on_dev_mode_requested,    Qt.ConnectionType.QueuedConnection)
 
     window.show_progress_indeterminate("セットアップを確認しています...")
     window.show()

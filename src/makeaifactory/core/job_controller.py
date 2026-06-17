@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING, Callable
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.output_resolver import resolve_output_mp4
 from ..comfy.progress_tracker import ProgressTracker, build_node_labels
-from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
+from ..comfy.workflow_patcher import (
+    DevModeOverrides,
+    WorkflowPatchContext,
+    apply_dev_overrides,
+    make_output_prefix,
+    patch_workflow,
+)
 from ..comfy.server_controller import ComfyServerController
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
@@ -56,6 +62,7 @@ class JobController:
         self,
         input_image: Path,
         on_progress: ProgressCallback | None = None,
+        dev_overrides: DevModeOverrides | None = None,
     ) -> tuple[Path, BenchmarkResult]:
         job = Job()
         self._current_job = job
@@ -89,7 +96,11 @@ class JobController:
         job.uploaded_image_name = uploaded_name
 
         # workflow patch
-        seed = random.randint(0, 2**32 - 1) if self._settings.seed_randomize else None
+        if dev_overrides is not None:
+            # dev mode: シードはオーバーライドが持つ (None なら template のまま)
+            seed = dev_overrides.seed
+        else:
+            seed = random.randint(0, 2**32 - 1) if self._settings.seed_randomize else None
         from ..constants import MODEL_PRESETS
         preset_def = MODEL_PRESETS.get(self._settings.model_preset, MODEL_PRESETS["normal"])
         ctx = WorkflowPatchContext(
@@ -106,6 +117,8 @@ class JobController:
             ),
         )
         patched = patch_workflow(self._template, ctx)
+        if dev_overrides is not None:
+            patched = apply_dev_overrides(patched, dev_overrides)
         job.seed = seed
 
         # workflow を保存
