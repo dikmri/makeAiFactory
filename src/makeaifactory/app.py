@@ -229,7 +229,7 @@ def run_app() -> int:
     signals = _AsyncSignals()
 
     # Discord Bot コントローラ（起動後に設定）
-    _discord: dict = {"ctrl": None, "generating": False}
+    _discord: dict = {"ctrl": None, "generating": False, "batch_running": False}
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
@@ -297,6 +297,9 @@ def run_app() -> int:
 
     @Slot(int, int, float)
     def _on_batch_done(completed: int, total: int, elapsed_sec: float) -> None:
+        _discord["batch_running"] = False
+        if _discord["ctrl"]:
+            _discord["ctrl"].set_batch_mode(False)
         write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
@@ -348,6 +351,13 @@ def run_app() -> int:
     def _on_discord_job_started(image_path: str, username: str) -> None:
         _discord["generating"] = True
         write_bot_state(paths.runtime_root, "single")
+
+        if _discord["batch_running"]:
+            # バッチ割り込みモード: メインウィンドウUIはバッチのまま維持し、ステータスのみ更新
+            window.update_status(f"⚡ Discord 割り込み生成中: @{username}")
+            logger.info("Discord 割り込みジョブ開始: @%s %s", username, image_path)
+            return
+
         window.enter_single_mode(Path(image_path))
         window.update_single_progress(f"Discord: @{username}", 0.0, -1.0)
 
@@ -361,12 +371,17 @@ def run_app() -> int:
 
     @Slot(float, str)
     def _on_discord_job_progress(pct: float, msg: str) -> None:
-        if _discord["generating"]:
+        if _discord["generating"] and not _discord["batch_running"]:
             window.update_single_progress(msg, pct, pct)
 
     @Slot(str)
     def _on_discord_job_done(output_path: str) -> None:
         _discord["generating"] = False
+        if _discord["batch_running"]:
+            # バッチ割り込み完了: バッチ状態に戻す（結果はDiscordチャンネルに送信済み）
+            write_bot_state(paths.runtime_root, "batch")
+            logger.info("Discord 割り込みジョブ完了: %s", output_path)
+            return
         write_bot_state(paths.runtime_root, "idle")
         window.show_result(Path(output_path))
         _play_complete_se()
@@ -375,6 +390,9 @@ def run_app() -> int:
     @Slot()
     def _on_discord_job_cancelled() -> None:
         _discord["generating"] = False
+        if _discord["batch_running"]:
+            write_bot_state(paths.runtime_root, "batch")
+            return
         write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
@@ -384,6 +402,10 @@ def run_app() -> int:
     @Slot(str)
     def _on_discord_job_error(msg: str) -> None:
         _discord["generating"] = False
+        if _discord["batch_running"]:
+            write_bot_state(paths.runtime_root, "batch")
+            logger.error("Discord 割り込みジョブエラー: %s", msg)
+            return
         write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
@@ -399,12 +421,13 @@ def run_app() -> int:
                 dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
             )
 
-        def _handle_save(enabled: bool, token: str, channel_ids: list) -> None:
-            logger.info("Discord 設定保存: enabled=%s, has_token=%s", enabled, bool(token))
+        def _handle_save(enabled: bool, token: str, channel_ids: list, interrupt: bool = False) -> None:
+            logger.info("Discord 設定保存: enabled=%s, has_token=%s, interrupt=%s", enabled, bool(token), interrupt)
             try:
                 settings.set_discord_bot_enabled(enabled)
                 settings.set_discord_token(token)
                 settings.set_discord_channel_ids(list(channel_ids))
+                settings.set_discord_bot_interrupt(interrupt)
                 if enabled and token:
                     _start_discord_bot()
                     if _discord["ctrl"]:
@@ -572,6 +595,19 @@ def run_app() -> int:
                 else:
                     logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
 
+            # Discord 割り込み生成: 1件終了後、割り込みキューが空になるまで待機
+            disc_ctrl = _discord["ctrl"]
+            if settings.discord_bot_interrupt and disc_ctrl and disc_ctrl.interrupt_active.is_set():
+                logger.info("Discord 割り込み待機 (バッチ %d/%d 完了後)", i + 1, total)
+                all_pct_so_far = (i + 1) / total * 100
+                signals.batch_progress.emit(
+                    f"フォルダ生成 ({i + 1}/{total}) — ⚡ Discord 割り込み生成中...",
+                    all_pct_so_far, 100.0, -1.0, "Discord からのリクエストを優先処理中",
+                )
+                while disc_ctrl.interrupt_active.is_set() and not _batch_cancel.is_set():
+                    await asyncio.sleep(0.5)
+                logger.info("Discord 割り込み完了 → バッチ再開")
+
         elapsed = time.monotonic() - start
         signals.batch_done.emit(completed, total, elapsed)
 
@@ -616,6 +652,9 @@ def run_app() -> int:
         write_bot_state(paths.runtime_root, "batch")
         _batch_cancel.clear()
         _batch_finish_after_current.clear()
+        _discord["batch_running"] = True
+        if _discord["ctrl"] and settings.discord_bot_interrupt:
+            _discord["ctrl"].set_batch_mode(True)
 
         def _do_cancel() -> None:
             _batch_cancel.set()

@@ -49,7 +49,7 @@ def _patch_broken_orjson() -> None:
 
 _patch_broken_orjson()
 del _patch_broken_orjson
-_MAX_QUEUE_SIZE = 3
+_MAX_QUEUE_SIZE = 100
 
 
 class _CancelledError(Exception):
@@ -76,6 +76,9 @@ class DiscordBotController:
         self._current_comfy_client: ComfyApiClient | None = None
         self._cancel_requested = threading.Event()
         self._running = False
+        # 割り込み生成用: バッチ中に Discord リクエストが来たことを示す threading.Event
+        self._interrupt_active = threading.Event()
+        self._batch_mode: bool = False       # app.py がバッチ開始/終了時にセット
 
     @property
     def signals(self) -> DiscordBotSignals:
@@ -84,6 +87,16 @@ class DiscordBotController:
     @property
     def is_running(self) -> bool:
         return self._running and (self._thread is not None) and self._thread.is_alive()
+
+    @property
+    def interrupt_active(self) -> threading.Event:
+        return self._interrupt_active
+
+    def set_batch_mode(self, active: bool) -> None:
+        """バッチ生成の開始/終了を通知する。割り込みモードのキュー判定に使用。"""
+        self._batch_mode = active
+        if not active:
+            self._interrupt_active.clear()
 
     def start(self) -> None:
         if self.is_running:
@@ -207,18 +220,29 @@ class DiscordBotController:
         if image_att is None:
             return
 
-        state, _ = read_bot_state(self._paths.runtime_root)
+        # バッチ生成中の処理: 割り込みモードか否かで分岐
+        if self._batch_mode:
+            if self._settings.discord_bot_interrupt:
+                # 割り込みモード: バッチ中でも受け付けてキューに追加
+                if self._queue.full():
+                    await message.reply("リクエストが集中しています。しばらく待ってからもう一度お試しください。")
+                    return
+                self._interrupt_active.set()
+                pos = self._queue.qsize() + 1
+                if pos == 1:
+                    await message.reply("⚡ 受け付けました。現在の動画完了後に割り込んで処理します。")
+                else:
+                    await message.reply(f"⚡ 受け付けました。割り込みキューの {pos} 番目に並んでいます。")
+                await self._queue.put((message, image_att))
+                return
+            else:
+                await message.reply(
+                    "フォルダ生成中のため、現在リクエストを受け付けられません。\n"
+                    "フォルダ生成が完了してからもう一度お試しください。"
+                )
+                return
 
-        if state == "batch":
-            await message.reply(
-                "フォルダ生成中のため、現在リクエストを受け付けられません。\n"
-                "フォルダ生成が完了してからもう一度お試しください。"
-            )
-            return
-
-        # "offline" はタイムスタンプ期限切れを意味するが、アプリ内 Bot は
-        # 同一プロセスなので期限切れでも処理を続行する（comfy_port は _process で再確認）
-
+        # 通常モード (idle / single)
         if self._queue.full():
             await message.reply("リクエストが集中しています。しばらく待ってからもう一度お試しください。")
             return
@@ -266,6 +290,9 @@ class DiscordBotController:
             finally:
                 self._cancel_requested.clear()
                 self._queue.task_done()
+                # 割り込みキューが空になったら待機フラグを解除
+                if self._queue.empty():
+                    self._interrupt_active.clear()
 
     # ── 1件の生成処理 ──────────────────────────────────────────────────────
 

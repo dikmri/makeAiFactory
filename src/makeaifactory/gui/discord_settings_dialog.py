@@ -98,6 +98,18 @@ class DiscordSettingsDialog(QDialog):
 
         layout.addSpacing(8)
 
+        # ── 割り込み生成 ──────────────────────────────────────────────
+        self._interrupt_cb = QCheckBox("フォルダ生成中に Discord 割り込みを許可する（友人の依頼を優先）")
+        self._interrupt_cb.setStyleSheet("font-size: 13px;")
+        layout.addWidget(self._interrupt_cb)
+
+        hint_intr = QLabel("ℹ  ON にすると、フォルダ生成中でも Discord からの画像を現在の動画完了後すぐに処理します")
+        hint_intr.setStyleSheet("color: #666; font-size: 11px;")
+        hint_intr.setWordWrap(True)
+        layout.addWidget(hint_intr)
+
+        layout.addSpacing(8)
+
         # ── Bot 状態表示 ──────────────────────────────────────────────
         status_row = QHBoxLayout()
         status_row.addWidget(self._make_label("Bot 状態:"))
@@ -165,6 +177,7 @@ class DiscordSettingsDialog(QDialog):
         self._token_edit.setText(self._settings.discord_token)
         ids = self._settings.discord_channel_ids
         self._channels_edit.setText(", ".join(str(x) for x in ids))
+        self._interrupt_cb.setChecked(self._settings.discord_bot_interrupt)
 
     def _on_show_token_toggled(self, checked: bool) -> None:
         mode = QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
@@ -175,9 +188,10 @@ class DiscordSettingsDialog(QDialog):
         enabled = self._enabled_cb.isChecked()
         token = self._token_edit.text().strip()
         channel_ids = self._parse_channel_ids()
+        interrupt = self._interrupt_cb.isChecked()
         self.update_bot_status("保存中...")
         if self._save_callback:
-            self._save_callback(enabled, token, channel_ids)
+            self._save_callback(enabled, token, channel_ids, interrupt)
 
     def _on_test_clicked(self) -> None:
         token = self._token_edit.text().strip()

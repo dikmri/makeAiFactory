@@ -24,6 +24,7 @@ _DEFAULTS = {
     "discord_bot_enabled": False,
     "discord_token": "",
     "discord_channel_ids": [],      # list[int]
+    "discord_bot_interrupt": False, # フォルダ生成中に Discord リクエストを割り込ませる
 }
 
 
@@ -178,3 +179,10 @@ class SettingsStore:
 
     def set_discord_channel_ids(self, ids: list[int]) -> None:
         self.set("discord_channel_ids", [int(x) for x in ids])
+
+    @property
+    def discord_bot_interrupt(self) -> bool:
+        return bool(self.get("discord_bot_interrupt"))
+
+    def set_discord_bot_interrupt(self, enabled: bool) -> None:
+        self.set("discord_bot_interrupt", enabled)
