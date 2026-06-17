@@ -159,6 +159,14 @@ class DiscordBotController:
                 self._signals.status_changed.emit("切断 (再接続中...)")
 
         @self._discord_client.event
+        async def on_resumed() -> None:
+            # セッション再開（Resume）時は on_ready が発火しないため個別に処理する
+            user = self._discord_client.user
+            logger.info("Discord Bot セッション再開: %s", user)
+            self._signals.status_changed.emit(f"接続完了: {user}")
+            write_bot_state(self._paths.runtime_root, "idle")
+
+        @self._discord_client.event
         async def on_message(message) -> None:
             await self._handle_message(message)
 
