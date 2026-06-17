@@ -34,6 +34,15 @@ for _pkg in ('httpx', 'pydantic', 'aiofiles', 'discord'):
     tmp_ret = collect_all(_pkg)
     datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+# orjson を全リストから除去: discord.py は try/except で標準 json にフォールバックする
+# collect_all('discord') が orjson.pyd をバイナリ収集することがあるため
+# excludes だけでなく各リストから明示的に除外する
+def _drop_orjson(seq):
+    return [(s, d) for s, d in seq if 'orjson' not in s.lower().replace('\\', '/')]
+datas        = _drop_orjson(datas)
+binaries     = _drop_orjson(binaries)
+hiddenimports = [h for h in hiddenimports if 'orjson' not in h.lower()]
+
 
 a = Analysis(
     ['makeaifactory_launcher.py'],
