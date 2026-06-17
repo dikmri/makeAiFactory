@@ -229,7 +229,7 @@ def run_app() -> int:
     signals = _AsyncSignals()
 
     # Discord Bot コントローラ（起動後に設定）
-    _discord: dict = {"ctrl": None, "generating": False, "batch_running": False}
+    _discord: dict = {"ctrl": None, "generating": False, "batch_running": False, "batch_all_pct": 0.0}
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
@@ -289,6 +289,7 @@ def run_app() -> int:
 
     @Slot(str, float, float, float, str)
     def _on_batch_progress(message: str, all_pct: float, image_pct: float, task_pct: float, detail: str) -> None:
+        _discord["batch_all_pct"] = all_pct
         window.update_batch_progress(message, all_pct, image_pct, task_pct, detail)
 
     @Slot(Path)
@@ -353,8 +354,11 @@ def run_app() -> int:
         write_bot_state(paths.runtime_root, "single")
 
         if _discord["batch_running"]:
-            # バッチ割り込みモード: メインウィンドウUIはバッチのまま維持し、ステータスのみ更新
-            window.update_status(f"⚡ Discord 割り込み生成中: @{username}")
+            window.set_current_image(Path(image_path))
+            window.update_batch_progress(
+                f"⚡ Discord 割り込み生成中: @{username}",
+                _discord["batch_all_pct"], 0.0, -1.0, "Discord からの依頼を処理中",
+            )
             logger.info("Discord 割り込みジョブ開始: @%s %s", username, image_path)
             return
 
@@ -371,15 +375,25 @@ def run_app() -> int:
 
     @Slot(float, str)
     def _on_discord_job_progress(pct: float, msg: str) -> None:
-        if _discord["generating"] and not _discord["batch_running"]:
+        if not _discord["generating"]:
+            return
+        if _discord["batch_running"]:
+            window.update_batch_progress(
+                f"⚡ Discord 割り込み生成中 — {msg}",
+                _discord["batch_all_pct"], pct, pct, "Discord からの依頼を処理中",
+            )
+        else:
             window.update_single_progress(msg, pct, pct)
 
     @Slot(str)
     def _on_discord_job_done(output_path: str) -> None:
         _discord["generating"] = False
         if _discord["batch_running"]:
-            # バッチ割り込み完了: バッチ状態に戻す（結果はDiscordチャンネルに送信済み）
             write_bot_state(paths.runtime_root, "batch")
+            window.update_batch_progress(
+                "⚡ Discord 割り込み完了 — バッチ再開中...",
+                _discord["batch_all_pct"], 100.0, -1.0, "",
+            )
             logger.info("Discord 割り込みジョブ完了: %s", output_path)
             return
         write_bot_state(paths.runtime_root, "idle")
