@@ -222,11 +222,27 @@ class RemoteRoomController:
             self._signals.error.emit(f"ローカルサーバーの起動に失敗しました:\n{e}")
             return
 
+        # cloudflared バイナリを確保 (なければ自動ダウンロード)
+        from .cloudflared_installer import ensure_cloudflared
+
+        def _dl_progress(msg: str, pct: float) -> None:
+            self._signals.status_changed.emit("starting", msg)
+
+        try:
+            cloudflared_exe = await ensure_cloudflared(self._paths.runtime_root, _dl_progress)
+        except Exception as e:
+            self._signals.status_changed.emit("error", f"cloudflared 取得失敗: {e}")
+            self._signals.error.emit(str(e))
+            await server.stop()
+            return
+
+        self._signals.status_changed.emit("starting", "トンネルを起動中...")
+
         # Tunnel
         tunnel = TunnelManager()
         public_url: str | None = None
         try:
-            public_url = await tunnel.start(port)
+            public_url = await tunnel.start(port, exe_path=cloudflared_exe)
             self._signals.public_url_ready.emit(public_url, self._pin)
             self._signals.status_changed.emit("running", f"公開中: {public_url}")
             logger.info("投入口 公開: %s (PIN: %s)", public_url, "あり" if self._pin else "なし")

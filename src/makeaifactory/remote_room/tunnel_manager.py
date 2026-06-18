@@ -48,12 +48,13 @@ class TunnelManager:
     def public_url(self) -> str | None:
         return self._public_url
 
-    async def start(self, local_port: int) -> str:
+    async def start(self, local_port: int, exe_path: Path | None = None) -> str:
         """
         cloudflared を起動して trycloudflare.com URL を返す。
+        exe_path を指定するとそのバイナリを使用する (cloudflared_installer から渡される)。
         TUNNEL_STARTUP_TIMEOUT 秒以内に URL が取得できない場合は RuntimeError を送出する。
         """
-        cloudflared = find_cloudflared()
+        cloudflared = exe_path or find_cloudflared()
         if cloudflared is None:
             raise RuntimeError(
                 "cloudflared が見つかりません。\n"
