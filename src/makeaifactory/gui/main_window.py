@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QLabel,
@@ -116,6 +116,39 @@ class MainWindow(QMainWindow):
         """)
         self._batch_btn.clicked.connect(self.batch_requested)
         dp_layout.addWidget(self._batch_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # インターネット投入口 公開中 QR パネル (投入口が running の間だけ表示)
+        self._remote_qr_panel = QWidget()
+        from PySide6.QtWidgets import QFrame
+        self._remote_qr_panel.setStyleSheet(
+            "background: #12122a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 8px;"
+        )
+        rqr_layout = QVBoxLayout(self._remote_qr_panel)
+        rqr_layout.setSpacing(4)
+        rqr_layout.setContentsMargins(12, 8, 12, 8)
+
+        rqr_title = QLabel("🌐 インターネット投入口 公開中")
+        rqr_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rqr_title.setStyleSheet(
+            "font-size: 12px; color: #66bb6a; font-weight: bold;"
+            "background: transparent; border: none;"
+        )
+        rqr_layout.addWidget(rqr_title)
+
+        self._remote_qr_img_label = QLabel()
+        self._remote_qr_img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._remote_qr_img_label.setStyleSheet("background: transparent; border: none;")
+        rqr_layout.addWidget(self._remote_qr_img_label)
+
+        self._remote_qr_hint_label = QLabel()
+        self._remote_qr_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._remote_qr_hint_label.setStyleSheet(
+            "font-size: 11px; color: #aaa; background: transparent; border: none;"
+        )
+        rqr_layout.addWidget(self._remote_qr_hint_label)
+
+        self._remote_qr_panel.hide()
+        dp_layout.addWidget(self._remote_qr_panel, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._stack.addWidget(drop_page)  # _PAGE_DROP
 
@@ -559,6 +592,22 @@ class MainWindow(QMainWindow):
             indicator = "○"
         self._discord_status_lbl.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 8px;")
         self._discord_status_lbl.setText(f"Discord Bot: {indicator} {status_text}")
+
+    def show_remote_room_qr(self, qr_bytes: bytes, hint: str) -> None:
+        """投入口公開中 QR コードをドロップページに表示する。"""
+        pixmap = QPixmap()
+        pixmap.loadFromData(qr_bytes)
+        self._remote_qr_img_label.setPixmap(pixmap.scaled(
+            160, 160,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        self._remote_qr_hint_label.setText(hint)
+        self._remote_qr_panel.show()
+
+    def clear_remote_room_qr(self) -> None:
+        """投入口 QR コードを非表示にする。"""
+        self._remote_qr_panel.hide()
 
     def start_elapsed_timer(self) -> None:
         self._progress_view.start_elapsed()

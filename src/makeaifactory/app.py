@@ -236,7 +236,7 @@ def run_app() -> int:
     _discord: dict = {"ctrl": None, "generating": False, "batch_running": False, "batch_all_pct": 0.0}
 
     # Remote Room コントローラ
-    _remote_room: dict = {"ctrl": None, "dlg": None}
+    _remote_room: dict = {"ctrl": None, "dlg": None, "generating": False}
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
@@ -472,6 +472,30 @@ def run_app() -> int:
 
     # ── Remote Room ───────────────────────────────────────────────────────
 
+    @Slot(str, str)
+    def _on_remote_url_ready(url: str, pin: str) -> None:
+        """URL 公開時にメインウィンドウの drop ページへ QR を表示する。"""
+        try:
+            import io
+            import qrcode  # type: ignore[import]
+            qr_url = f"{url}?pin={pin}" if pin else url
+            qr = qrcode.QRCode(box_size=5, border=2)
+            qr.add_data(qr_url)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="white", back_color="#0f0f1a")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            hint = "📱 スキャンで入室 (PIN自動入力)" if pin else "📱 スキャンして入室"
+            window.show_remote_room_qr(buf.getvalue(), hint)
+        except Exception as e:
+            logger.debug("メインウィンドウ QR 生成スキップ: %s", e)
+
+    @Slot(str, str)
+    def _on_remote_status_for_qr(status_code: str, _message: str) -> None:
+        """投入口が停止したときメインウィンドウの QR を消す。"""
+        if status_code in ("stopped", "error"):
+            window.clear_remote_room_qr()
+
     @Slot()
     def _on_remote_room_requested() -> None:
         dlg = _remote_room.get("dlg")
@@ -487,14 +511,16 @@ def run_app() -> int:
                 ctrl = RemoteRoomController(settings, paths)
                 _remote_room["ctrl"] = ctrl
                 sig = ctrl.signals
-                sig.status_changed.connect(dlg.update_status, Qt.ConnectionType.QueuedConnection)
-                sig.public_url_ready.connect(dlg.set_public_url, Qt.ConnectionType.QueuedConnection)
-                sig.stats_changed.connect(dlg.update_stats, Qt.ConnectionType.QueuedConnection)
-                sig.error.connect(dlg.show_error_msg, Qt.ConnectionType.QueuedConnection)
-                sig.job_started.connect(_on_remote_job_started, Qt.ConnectionType.QueuedConnection)
-                sig.job_progress.connect(_on_remote_job_progress, Qt.ConnectionType.QueuedConnection)
-                sig.job_done.connect(_on_remote_job_done, Qt.ConnectionType.QueuedConnection)
-                sig.job_error.connect(_on_remote_job_error, Qt.ConnectionType.QueuedConnection)
+                sig.status_changed.connect(dlg.update_status,          Qt.ConnectionType.QueuedConnection)
+                sig.status_changed.connect(_on_remote_status_for_qr,   Qt.ConnectionType.QueuedConnection)
+                sig.public_url_ready.connect(dlg.set_public_url,       Qt.ConnectionType.QueuedConnection)
+                sig.public_url_ready.connect(_on_remote_url_ready,     Qt.ConnectionType.QueuedConnection)
+                sig.stats_changed.connect(dlg.update_stats,            Qt.ConnectionType.QueuedConnection)
+                sig.error.connect(dlg.show_error_msg,                  Qt.ConnectionType.QueuedConnection)
+                sig.job_started.connect(_on_remote_job_started,        Qt.ConnectionType.QueuedConnection)
+                sig.job_progress.connect(_on_remote_job_progress,      Qt.ConnectionType.QueuedConnection)
+                sig.job_done.connect(_on_remote_job_done,              Qt.ConnectionType.QueuedConnection)
+                sig.job_error.connect(_on_remote_job_error,            Qt.ConnectionType.QueuedConnection)
                 settings.set_remote_room_config(config_dict)
                 ctrl.start(cfg)
                 dlg.update_status("starting", "起動中...")
@@ -517,21 +543,41 @@ def run_app() -> int:
 
     @Slot(str, str)
     def _on_remote_job_started(job_id: str, image_path: str) -> None:
+        _remote_room["generating"] = True
+        write_bot_state(paths.runtime_root, "single")
+        window.enter_single_mode(Path(image_path))
+        window.update_single_progress(f"🌐 投入口 生成中: #{job_id[:6]}", 0.0, -1.0)
+
+        def _do_remote_cancel() -> None:
+            ctrl = _remote_room.get("ctrl")
+            if ctrl:
+                ctrl.cancel_current_job()
+            window.update_status("🌐 投入口 生成をキャンセル中...")
+
+        window.show_cancel_btn(_do_remote_cancel)
         logger.info("Remote Room ジョブ開始: %s", job_id)
-        window.update_status(f"🌐 投入口 生成中: #{job_id[:6]}")
 
     @Slot(str, float, str)
     def _on_remote_job_progress(job_id: str, pct: float, label: str) -> None:
-        pass  # ダイアログ側の stats 表示で把握できるため app の progress view は更新しない
+        if _remote_room["generating"]:
+            window.update_single_progress(label, pct, pct)
 
     @Slot(str, str)
     def _on_remote_job_done(job_id: str, output_path: str) -> None:
-        logger.info("Remote Room ジョブ完了: %s → %s", job_id, output_path)
+        _remote_room["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.show_result(Path(output_path))
         _play_complete_se()
-        window.update_status(f"🌐 投入口 完了: #{job_id[:6]}")
+        logger.info("Remote Room ジョブ完了: %s → %s", job_id, output_path)
 
     @Slot(str, str)
     def _on_remote_job_error(job_id: str, msg: str) -> None:
+        _remote_room["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        window.update_status(f"🌐 投入口 生成エラー: {msg}")
         logger.error("Remote Room ジョブエラー: %s — %s", job_id, msg)
 
     @Slot()
