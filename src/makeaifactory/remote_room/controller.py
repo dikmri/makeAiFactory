@@ -203,7 +203,13 @@ class RemoteRoomController:
             )
             return
 
-        static_dir = Path(__file__).resolve().parent / "static"
+        import sys
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            # PyInstaller バンドル: _MEIPASS 内の固定パスを使用
+            static_dir = Path(sys._MEIPASS) / "makeaifactory" / "remote_room" / "static"
+        else:
+            # 開発モード: ソースファイルからの相対パス
+            static_dir = Path(__file__).resolve().parent / "static"
         logger.info("static_dir: %s (exists: %s, index: %s)",
                     static_dir, static_dir.exists(), (static_dir / "index.html").exists())
 

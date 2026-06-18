@@ -12,7 +12,13 @@ _site_pkgs = _spec_dir / '.venv' / 'Lib' / 'site-packages'
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 
-datas = [('app/manifest', 'app/manifest'), ('app/workflow', 'app/workflow'), ('app/assets', 'app/assets')]
+datas = [
+    ('app/manifest', 'app/manifest'),
+    ('app/workflow', 'app/workflow'),
+    ('app/assets', 'app/assets'),
+    # インターネット投入口 β の Web UI 静的ファイル (HTML / JS / CSS)
+    ('src/makeaifactory/remote_room/static', 'makeaifactory/remote_room/static'),
+]
 binaries = []
 hiddenimports = []
 
@@ -29,8 +35,13 @@ if _ws.exists():
 else:
     print(f'[WARN] websockets not found at {_ws}', file=sys.stderr)
 
-# httpx / pydantic / aiofiles / discord
-for _pkg in ('httpx', 'pydantic', 'aiofiles', 'discord'):
+# httpx / pydantic / aiofiles / discord / aiohttp / Pillow / qrcode
+for _pkg in ('httpx', 'pydantic', 'aiofiles', 'discord', 'aiohttp', 'PIL', 'qrcode'):
+    tmp_ret = collect_all(_pkg)
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# aiohttp が依存する multidict / yarl / frozenlist
+for _pkg in ('multidict', 'yarl', 'frozenlist'):
     tmp_ret = collect_all(_pkg)
     datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
