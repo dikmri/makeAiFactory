@@ -203,13 +203,17 @@ class RemoteRoomController:
             )
             return
 
+        static_dir = Path(__file__).resolve().parent / "static"
+        logger.info("static_dir: %s (exists: %s, index: %s)",
+                    static_dir, static_dir.exists(), (static_dir / "index.html").exists())
+
         server = RoomServer(
             config=config,
             auth_manager=auth,
             rate_limiter=limiter,
             jobs=self._jobs,
             job_queue=self._job_queue,
-            static_dir=Path(__file__).parent / "static",
+            static_dir=static_dir,
             ip_salt=self._ip_salt,
             on_stats_changed=lambda s: self._signals.stats_changed.emit(s),
             accepting_ref=self._accepting,

@@ -153,11 +153,26 @@ class RoomServer:
     async def _handle_index(self, request) -> object:
         from aiohttp import web
         index = self._static_dir / "index.html"
+        logger.debug("index path: %s (exists: %s)", index, index.exists())
         if not index.exists():
+            logger.warning("index.html が見つかりません: %s", index)
             return web.Response(status=404, text="Web UI が見つかりません")
-        return web.FileResponse(index)
+        try:
+            content = index.read_bytes()
+            return web.Response(body=content, content_type="text/html", charset="utf-8")
+        except Exception as e:
+            logger.error("index.html 読み込みエラー: %s", e)
+            return web.Response(status=500, text=f"Web UI 読み込みエラー: {e}")
 
     # ── ルート: GET /static/{filename} ────────────────────────────────────────
+
+    _STATIC_MIME: dict[str, str] = {
+        ".css": "text/css",
+        ".js": "application/javascript",
+        ".html": "text/html",
+        ".png": "image/png",
+        ".ico": "image/x-icon",
+    }
 
     async def _handle_static(self, request) -> object:
         from aiohttp import web
@@ -168,7 +183,16 @@ class RoomServer:
         file_path = self._static_dir / filename
         if not file_path.exists() or not file_path.is_file():
             raise web.HTTPNotFound()
-        return web.FileResponse(file_path)
+        ext = file_path.suffix.lower()
+        mime = self._STATIC_MIME.get(ext, "application/octet-stream")
+        try:
+            content = file_path.read_bytes()
+            if mime.startswith("text/"):
+                return web.Response(body=content, content_type=mime, charset="utf-8")
+            return web.Response(body=content, content_type=mime)
+        except Exception as e:
+            logger.error("static file 読み込みエラー %s: %s", filename, e)
+            raise web.HTTPInternalServerError()
 
     # ── ルート: POST /api/auth ─────────────────────────────────────────────────
 
