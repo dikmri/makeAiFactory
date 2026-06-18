@@ -138,6 +138,12 @@ class RemoteRoomDialog(QDialog):
         self._qr_label.hide()
         layout.addWidget(self._qr_label)
 
+        self._qr_hint_label = QLabel()
+        self._qr_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._qr_hint_label.setStyleSheet("font-size:12px;color:#aaa;margin-bottom:4px;")
+        self._qr_hint_label.hide()
+        layout.addWidget(self._qr_hint_label)
+
         # コピーボタン群
         copy_row = QHBoxLayout()
         self._copy_url_btn = QPushButton("URL をコピー")
@@ -278,6 +284,7 @@ class RemoteRoomDialog(QDialog):
             self._url_label.setText("")
             self._pin_label.setText("")
             self._qr_label.hide()
+            self._qr_hint_label.hide()
             self._copy_url_btn.setEnabled(False)
             self._copy_both_btn.setEnabled(False)
 
@@ -350,8 +357,10 @@ class RemoteRoomDialog(QDialog):
         try:
             import io
             import qrcode  # type: ignore[import]
-            qr = qrcode.QRCode(box_size=4, border=2)
-            qr.add_data(url)
+            pin = getattr(self, "_public_pin", "")
+            qr_url = f"{url}?pin={pin}" if pin else url
+            qr = qrcode.QRCode(box_size=6, border=2)
+            qr.add_data(qr_url)
             qr.make(fit=True)
             img = qr.make_image(fill_color="white", back_color="#0f0f1a")
             buf = io.BytesIO()
@@ -360,11 +369,15 @@ class RemoteRoomDialog(QDialog):
             pixmap = QPixmap()
             pixmap.loadFromData(buf.read())
             self._qr_label.setPixmap(pixmap.scaled(
-                180, 180,
+                240, 240,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             ))
             self._qr_label.show()
+            hint = "📱 スキャンで入室 (PIN 自動入力)" if pin else "📱 スキャンして入室"
+            self._qr_hint_label.setText(hint)
+            self._qr_hint_label.show()
         except Exception as e:
             logger.debug("QR コード生成スキップ: %s", e)
             self._qr_label.hide()
+            self._qr_hint_label.hide()

@@ -10,12 +10,8 @@ let selectedFile = null;
 
 // ── ユーティリティ ────────────────────────────────────────────────────────────
 
-function html(strings, ...values) {
-  return strings.reduce((acc, str, i) => acc + str + (values[i] !== undefined ? escHtml(String(values[i])) : ''), '');
-}
-
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function render(htmlStr) {
@@ -23,17 +19,17 @@ function render(htmlStr) {
 }
 
 const ERROR_MSG = {
-  INVALID_PIN:      'PINが正しくありません。',
-  SESSION_EXPIRED:  'セッションが期限切れです。ページを再読み込みしてください。',
-  ROOM_EXPIRED:     '投入口の有効期限が切れました。',
-  ROOM_STOPPED:     '投入口は終了しました。必要な場合は、投入口を開いた人にもう一度URLを発行してもらってください。',
-  QUEUE_FULL:       '現在、投入口が混雑しています。しばらくしてからもう一度お試しください。',
-  RATE_LIMITED:     'リクエストが多すぎます。しばらく待ってからお試しください。',
-  INVALID_FILE_TYPE:'対応していないファイル形式です。JPG / PNG / WEBP のみアップロードできます。',
-  FILE_TOO_LARGE:   'ファイルサイズが大きすぎます。20MB以下の画像を選択してください。',
-  IMAGE_TOO_LARGE:  '画像の解像度が大きすぎます。4096px以下の画像を使用してください。',
-  GENERATION_BUSY:  '現在フォルダ一括生成中のため受付できません。しばらくしてからお試しください。',
-  GENERATION_FAILED:'生成に失敗しました。しばらくしてからもう一度お試しください。',
+  INVALID_PIN:       'PINが正しくありません。',
+  SESSION_EXPIRED:   'セッションが期限切れです。ページを再読み込みしてください。',
+  ROOM_EXPIRED:      '投入口の有効期限が切れました。',
+  ROOM_STOPPED:      '投入口は終了しました。必要な場合は、投入口を開いた人にもう一度URLを発行してもらってください。',
+  QUEUE_FULL:        '現在、投入口が混雑しています。しばらくしてからもう一度お試しください。',
+  RATE_LIMITED:      'リクエストが多すぎます。しばらく待ってからお試しください。',
+  INVALID_FILE_TYPE: '対応していないファイル形式です。JPG / PNG / WEBP のみアップロードできます。',
+  FILE_TOO_LARGE:    'ファイルサイズが大きすぎます。20MB以下の画像を選択してください。',
+  IMAGE_TOO_LARGE:   '画像の解像度が大きすぎます。4096px以下の画像を使用してください。',
+  GENERATION_BUSY:   '現在フォルダ一括生成中のため受付できません。しばらくしてからお試しください。',
+  GENERATION_FAILED: '生成に失敗しました。しばらくしてからもう一度お試しください。',
 };
 
 function getErrMsg(code, fallback) {
@@ -42,7 +38,7 @@ function getErrMsg(code, fallback) {
 
 // ── 画面: PIN 入力 ─────────────────────────────────────────────────────────────
 
-function showPin() {
+function showPin(prefillPin) {
   subtitle.textContent = 'PIN を入力してください';
   render(`
     <div class="card">
@@ -50,7 +46,7 @@ function showPin() {
       <label for="pin-input">PIN (6桁)</label>
       <input type="tel" id="pin-input" maxlength="6" placeholder="000000" autocomplete="one-time-code">
       <div class="error-msg" id="pin-error"></div>
-      <button class="btn" id="pin-btn" onclick="submitPin()">入室する</button>
+      <button class="btn" id="pin-btn">入室する</button>
     </div>
     <div class="card">
       <p style="font-size:13px;color:var(--text2);line-height:1.6">
@@ -60,14 +56,20 @@ function showPin() {
     </div>
   `);
   const input = document.getElementById('pin-input');
+  const btn   = document.getElementById('pin-btn');
   input.addEventListener('keydown', e => { if (e.key === 'Enter') submitPin(); });
+  btn.addEventListener('click', submitPin);
+  if (prefillPin) {
+    input.value = prefillPin;
+  }
   setTimeout(() => input.focus(), 50);
 }
 
 async function submitPin() {
   const input = document.getElementById('pin-input');
-  const btn = document.getElementById('pin-btn');
+  const btn   = document.getElementById('pin-btn');
   const errEl = document.getElementById('pin-error');
+  if (!input || !btn || !errEl) return;
   const pin = input.value.trim();
   if (!pin) return;
 
@@ -106,13 +108,13 @@ function showUpload(errorMsg) {
       <div class="card-title">🖼️ 画像を選ぶ</div>
       <img id="preview" class="preview-img" alt="プレビュー">
       <div class="drop-zone" id="drop-zone">
-        <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.webp" onchange="onFileSelected(this.files[0])">
+        <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.webp">
         <div class="drop-icon">📂</div>
         <div class="drop-text">ここに画像をドロップ、またはタップして選択</div>
         <div class="drop-hint">JPG / PNG / WEBP ・ 最大20MB</div>
       </div>
       ${errorMsg ? `<div class="error-msg">${escHtml(errorMsg)}</div>` : ''}
-      <button class="btn" id="generate-btn" onclick="submitJob()" disabled>動画にする ▶</button>
+      <button class="btn" id="generate-btn" disabled>動画にする ▶</button>
     </div>
     <div class="card" id="room-info-card">
       <div class="queue-info" id="queue-info"></div>
@@ -122,6 +124,8 @@ function showUpload(errorMsg) {
       個人情報・秘密情報・第三者の同意がない画像はアップロードしないでください。
     </div>
   `);
+  document.getElementById('file-input').addEventListener('change', e => onFileSelected(e.target.files[0]));
+  document.getElementById('generate-btn').addEventListener('click', submitJob);
   setupDropZone();
   loadRoomInfo();
 }
@@ -201,7 +205,7 @@ function showProcessing(position) {
     <div class="card">
       <div class="card-title">⚙️ 加工中です</div>
       <div class="status-row"><span class="status-key">状態</span><span id="proc-status" class="badge queued">待機中</span></div>
-      <div class="status-row"><span class="status-key">待ち順</span><span id="proc-pos" class="status-val">${position > 0 ? position + '番目' : '間もなく開始'}</span></div>
+      <div class="status-row"><span class="status-key">待ち順</span><span id="proc-pos" class="status-val">${escHtml(position > 0 ? position + '番目' : '間もなく開始')}</span></div>
       <div class="status-row"><span class="status-key">進捗</span><span id="proc-label" class="status-val">—</span></div>
       <div class="progress-wrap"><div class="progress-bar" id="proc-bar" style="width:0%"></div></div>
       <p style="font-size:12px;color:var(--text2);margin-top:12px;line-height:1.7">
@@ -214,18 +218,18 @@ function showProcessing(position) {
 
 function updateProcessing(data) {
   const statusEl = document.getElementById('proc-status');
-  const posEl = document.getElementById('proc-pos');
-  const labelEl = document.getElementById('proc-label');
-  const barEl = document.getElementById('proc-bar');
+  const posEl    = document.getElementById('proc-pos');
+  const labelEl  = document.getElementById('proc-label');
+  const barEl    = document.getElementById('proc-bar');
   if (!statusEl) return;
 
   const labels = { queued: '待機中', running: '生成中', completed: '完了', failed: '失敗', cancelled: 'キャンセル' };
   statusEl.textContent = labels[data.status] || data.status;
   statusEl.className = 'badge ' + (data.status || 'queued');
 
-  if (posEl) posEl.textContent = data.position > 0 ? data.position + '番目' : '実行中';
+  if (posEl)   posEl.textContent   = data.position > 0 ? data.position + '番目' : '実行中';
   if (labelEl) labelEl.textContent = data.progressLabel || '—';
-  if (barEl) barEl.style.width = (data.progressPct || 0) + '%';
+  if (barEl)   barEl.style.width   = (data.progressPct || 0) + '%';
 }
 
 // ── ポーリング ────────────────────────────────────────────────────────────────
@@ -267,11 +271,12 @@ function showComplete(videoUrl) {
       <a class="btn" id="dl-btn" href="${escHtml(videoUrl)}" download="makeAiFactory_output.mp4">
         ⬇ 保存する
       </a>
-      <button class="btn secondary" onclick="resetToUpload()" style="margin-top:8px">
+      <button class="btn secondary" id="again-btn" style="margin-top:8px">
         もう一度生成する
       </button>
     </div>
   `);
+  document.getElementById('again-btn').addEventListener('click', resetToUpload);
 }
 
 function resetToUpload() {
@@ -289,14 +294,18 @@ function showError(message) {
     <div class="card">
       <div class="card-title" style="color:var(--error)">⚠ エラー</div>
       <p style="font-size:14px;line-height:1.7;color:var(--text2)">${escHtml(message)}</p>
-      <button class="btn secondary" onclick="resetToUpload()" style="margin-top:16px">戻る</button>
+      <button class="btn secondary" id="back-btn" style="margin-top:16px">戻る</button>
     </div>
   `);
+  document.getElementById('back-btn').addEventListener('click', resetToUpload);
 }
 
 // ── 初期化 ────────────────────────────────────────────────────────────────────
 
 async function init() {
+  // QR コードに ?pin=XXXXXX が埋め込まれている場合は自動入力
+  const urlPin = new URLSearchParams(window.location.search).get('pin');
+
   try {
     const res = await fetch('/api/room');
     const data = await res.json();
@@ -304,22 +313,21 @@ async function init() {
       showError('投入口は終了しました。必要な場合は、投入口を開いた人にもう一度URLを発行してもらってください。');
       return;
     }
-    // PIN 不要かどうかを確認: auth エンドポイントに空 PIN で試す
+    // PIN 不要 or URL の PIN で認証を試みる
     const authRes = await fetch('/api/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: '' }),
+      body: JSON.stringify({ pin: urlPin || '' }),
     });
     const authData = await authRes.json();
     if (authData.ok) {
-      // PIN 不要モード
       csrfToken = authData.csrfToken;
       showUpload();
     } else {
-      showPin();
+      showPin(urlPin || null);
     }
   } catch {
-    showPin();
+    showPin(urlPin || null);
   }
 }
 
