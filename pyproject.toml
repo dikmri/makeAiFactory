@@ -23,7 +23,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/makeaifactory"]
+packages = ["src/makeaifactory", "src/makeimg"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
