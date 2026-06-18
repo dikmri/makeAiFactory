@@ -12,11 +12,13 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -128,12 +130,31 @@ class RemoteRoomDialog(QDialog):
         self._is_running = False
         self._build_ui()
 
+        # モニタの高さに収まるようダイアログ自体の高さを制限する (内部はスクロール可能)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            avail_h = screen.availableGeometry().height()
+            target_h = min(720, avail_h - 80)
+            self.resize(self.width(), target_h)
+            self.setMaximumHeight(avail_h - 40)
+
     # ── UI 構築 ──────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setSpacing(8)
+        outer_layout.setContentsMargins(16, 16, 16, 16)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer_layout.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+        layout = QVBoxLayout(content)
+        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # 説明
         desc = QLabel(
@@ -270,7 +291,7 @@ class RemoteRoomDialog(QDialog):
         close_btn = QPushButton("閉じる")
         close_btn.clicked.connect(self.close)
         close_btn.setFixedWidth(100)
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        outer_layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
     # ── 外部から呼ばれるメソッド ────────────────────────────────────────────────
 
@@ -389,7 +410,7 @@ class RemoteRoomDialog(QDialog):
     def _generate_qr(self, url: str) -> None:
         pin = getattr(self, "_public_pin", "")
         qr_url = f"{url}?pin={pin}" if pin else url
-        pixmap = make_qr_pixmap(qr_url, 240)
+        pixmap = make_qr_pixmap(qr_url, 200)
         if pixmap:
             self._qr_label.setPixmap(pixmap)
             self._qr_label.show()

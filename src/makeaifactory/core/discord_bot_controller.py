@@ -265,7 +265,7 @@ class DiscordBotController:
                 self._interrupt_active.set()
                 pos = self._queue.qsize() + 1
                 await message.reply(self._receipt_msg(pos, is_interrupt=True))
-                await self._queue.put((message, image_att))
+                await self._queue.put((message, image_att, True))
                 return
             else:
                 await message.reply(
@@ -281,7 +281,7 @@ class DiscordBotController:
 
         pos = self._queue.qsize() + 1
         await message.reply(self._receipt_msg(pos, is_interrupt=False))
-        await self._queue.put((message, image_att))
+        await self._queue.put((message, image_att, False))
 
     # ── 状態ファイル定期更新 ───────────────────────────────────────────────
 
@@ -289,21 +289,26 @@ class DiscordBotController:
         """bot_state.json のタイムスタンプを 90 秒ごとに更新する。
 
         read_bot_state() は 5 分以上更新がないと "offline" を返すため、
-        Bot が接続済みでアイドル状態でも定期的に "idle" を書き続ける。
+        現在の state ("idle" / "single" / "batch") を維持したまま
+        タイムスタンプだけ更新する (固定で "idle" に書き換えると
+        バッチ実行中の状態を誤って消してしまうため)。
         """
         while True:
             await asyncio.sleep(90)
             if self._running:
-                write_bot_state(self._paths.runtime_root, "idle")
-                logger.debug("bot_state.json 更新 (keep-alive)")
+                current_state, current_port = read_bot_state(self._paths.runtime_root)
+                if current_state == "offline":
+                    current_state = "idle"
+                write_bot_state(self._paths.runtime_root, current_state, current_port)
+                logger.debug("bot_state.json 更新 (keep-alive, state=%s)", current_state)
 
     # ── ワーカーループ ─────────────────────────────────────────────────────
 
     async def _worker(self) -> None:
         while True:
-            message, attachment = await self._queue.get()
+            message, attachment, is_interrupt = await self._queue.get()
             try:
-                await self._process(message, attachment)
+                await self._process(message, attachment, is_interrupt)
             except asyncio.CancelledError:
                 raise
             except _CancelledError:
@@ -328,12 +333,12 @@ class DiscordBotController:
 
     # ── 1件の生成処理 ──────────────────────────────────────────────────────
 
-    async def _process(self, message, attachment) -> None:
+    async def _process(self, message, attachment, is_interrupt: bool = False) -> None:
         self._cancel_requested.clear()
 
-        # デキュー直前の状態確認
+        # デキュー直前の状態確認 (割り込みキュー経由のリクエストは常に処理する)
         state, comfy_port = read_bot_state(self._paths.runtime_root)
-        if state == "batch":
+        if state == "batch" and not is_interrupt:
             await message.reply(
                 "申し訳ありません🙏\n"
                 "フォルダ生成が始まったため、このリクエストはキャンセルされてしまいました。\n"
@@ -353,10 +358,26 @@ class DiscordBotController:
         try:
             await attachment.save(image_path)
             username = str(message.author.display_name)
-            self._signals.job_started.emit(str(image_path), username)
+
+            started_emitted = False
+
+            def _emit_started() -> None:
+                nonlocal started_emitted
+                if not started_emitted:
+                    started_emitted = True
+                    self._signals.job_started.emit(str(image_path), username)
+
+            if not is_interrupt:
+                # 通常モードは即座に表示 (他の画像と競合しないため早期表示で問題ない)
+                _emit_started()
 
             gen_start = _time.monotonic()
-            output_path = await self._generate_video(image_path, comfy_port)
+            # 割り込みの場合、実際に ComfyUI が生成を開始するまでプレビュー切替を遅らせる
+            # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
+            output_path = await self._generate_video(
+                image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
+            )
+            _emit_started()  # フォールバック: execution_start を観測できなかった場合も必ず発火
             elapsed = _time.monotonic() - gen_start
 
             self._signals.job_done.emit(str(output_path))
@@ -382,7 +403,9 @@ class DiscordBotController:
 
     # ── ComfyUI 動画生成 ───────────────────────────────────────────────────
 
-    async def _generate_video(self, image_path: Path, comfy_port: int) -> Path:
+    async def _generate_video(
+        self, image_path: Path, comfy_port: int, on_started=None,
+    ) -> Path:
         model_preset = self._settings.model_preset
         preset_def = MODEL_PRESETS.get(model_preset, MODEL_PRESETS["normal"])
 
@@ -430,6 +453,8 @@ class DiscordBotController:
 
             self._signals.job_progress.emit(0.0, "生成中...")
             async for event in client.watch_progress(prompt_id):
+                if on_started is not None and event.event_type == "execution_start":
+                    on_started()
                 if event.event_type == "progress" and event.max_steps > 0:
                     pct = event.step / event.max_steps * 100
                     self._signals.job_progress.emit(pct, f"生成中... {int(pct)}%")
