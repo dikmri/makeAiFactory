@@ -19,6 +19,7 @@ from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.output_resolver import resolve_output_mp4
+from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state, write_bot_state
@@ -452,11 +453,12 @@ class DiscordBotController:
             logger.info("生成開始: job=%s prompt=%s", job_id, prompt_id)
 
             self._signals.job_progress.emit(0.0, "生成中...")
+            stage_estimator = StageProgressEstimator(count_progress_stages(template))
             async for event in client.watch_progress(prompt_id):
                 if on_started is not None and event.event_type == "execution_start":
                     on_started()
                 if event.event_type == "progress" and event.max_steps > 0:
-                    pct = event.step / event.max_steps * 100
+                    pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
                     self._signals.job_progress.emit(pct, f"生成中... {int(pct)}%")
 
             if self._cancel_requested.is_set():

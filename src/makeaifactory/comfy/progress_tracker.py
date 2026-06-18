@@ -55,15 +55,59 @@ def build_node_labels(template: dict) -> dict[str, str]:
     return labels
 
 
+# ワークフロー中で個別に "progress" イベントを送ってくるノードの class_type。
+# KSamplerAdvanced は高ノイズ/低ノイズ段で複数回登場し、ImageUpscaleWithModel も
+# 独立したステップ進捗を持つため、これらを横断して単調増加する進捗に変換する。
+_PROGRESS_STAGE_CLASS_TYPES = ("KSamplerAdvanced", "ImageUpscaleWithModel")
+
+
+def count_progress_stages(template: dict) -> int:
+    """テンプレート内で個別の progress イベントを送るノードの数を数える。"""
+    count = sum(
+        1
+        for node_data in template.values()
+        if isinstance(node_data, dict)
+        and node_data.get("class_type") in _PROGRESS_STAGE_CLASS_TYPES
+    )
+    return max(count, 1)
+
+
+class StageProgressEstimator:
+    """複数ノードに分散した "progress" イベントから単調増加する0-100%を推定する。
+
+    ComfyUIはKSamplerAdvanced(高/低ノイズ段)やImageUpscaleWithModelなど、
+    複数のノードがそれぞれ独立した0→max_stepsの進捗を送ってくる。単純に
+    直近のstep/max_stepsだけを見ると、新しいノードの実行が始まった瞬間に
+    進捗が一旦リセットされ、進捗バーが逆戻りするように見える。
+    既知のステージ数で等分した区間にノードの出現順を割り当てることで、
+    実行が次のノードへ移ってもバーが後退しないようにする。
+    """
+
+    def __init__(self, stage_count: int = 1):
+        self._stage_count = max(stage_count, 1)
+        self._seen_node_ids: list[str] = []
+
+    def update(self, node_id: str, step: int, max_steps: int) -> float:
+        if node_id and node_id not in self._seen_node_ids:
+            self._seen_node_ids.append(node_id)
+        stage_index = max(0, len(self._seen_node_ids) - 1)
+        within_stage = (step / max_steps) if max_steps > 0 else 0.0
+        within_stage = max(0.0, min(1.0, within_stage))
+        pct = (stage_index + within_stage) / self._stage_count * 100.0
+        return min(100.0, pct)
+
+
 class ProgressTracker:
     def __init__(
         self,
         on_progress: ProgressCallback | None = None,
         node_labels: dict[str, str] | None = None,
+        stage_count: int = 1,
     ):
         self._cb = on_progress
         self._node_labels = node_labels or {}
         self._progress = JobProgress(state=JobState.GENERATING)
+        self._stage_estimator = StageProgressEstimator(stage_count)
 
     def handle_event(self, event: ComfyProgressEvent) -> None:
         etype = event.event_type
@@ -81,9 +125,9 @@ class ProgressTracker:
                 self._progress.message = "生成中..."
 
         elif etype == "progress":
-            self._progress.step = event.step
-            self._progress.total_steps = event.max_steps
-            pct = self._progress.percent
+            pct = self._stage_estimator.update(event.node_id, event.step, event.max_steps)
+            self._progress.step = round(pct * 100)
+            self._progress.total_steps = 10_000
             self._progress.message = f"Wan2.2 動画生成中... {pct:.0f}%"
 
         elif etype == "execution_error":

@@ -21,6 +21,7 @@ from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.output_resolver import resolve_output_mp4
+from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
@@ -416,9 +417,11 @@ class RemoteRoomController:
             logger.info("RemoteRoom 生成開始: job=%s prompt=%s", job.job_id, prompt_id)
 
             on_progress(10.0, "生成中...")
+            stage_estimator = StageProgressEstimator(count_progress_stages(template))
             async for event in client.watch_progress(prompt_id):
                 if event.event_type == "progress" and event.max_steps > 0:
-                    pct = 10.0 + (event.step / event.max_steps) * 80.0
+                    stage_pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
+                    pct = 10.0 + stage_pct * 0.80
                     on_progress(pct, f"生成中... {int(pct)}%")
                 elif event.event_type == "execution_error":
                     break

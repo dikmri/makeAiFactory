@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Callable
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.output_resolver import resolve_output_mp4
-from ..comfy.progress_tracker import ProgressTracker, build_node_labels
+from ..comfy.progress_tracker import ProgressTracker, build_node_labels, count_progress_stages
 from ..comfy.workflow_patcher import (
     DevModeOverrides,
     WorkflowPatchContext,
@@ -136,6 +136,7 @@ class JobController:
             tracker = ProgressTracker(
                 on_progress=on_progress,
                 node_labels=build_node_labels(self._template),
+                stage_count=count_progress_stages(self._template),
             )
             async for event in client.watch_progress(prompt_id):
                 tracker.handle_event(event)
