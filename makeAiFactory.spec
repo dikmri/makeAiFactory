@@ -37,7 +37,11 @@ else:
 
 # httpx / pydantic / aiofiles / discord / aiohttp / Pillow / qrcode
 for _pkg in ('httpx', 'pydantic', 'aiofiles', 'discord', 'aiohttp', 'PIL', 'qrcode'):
-    tmp_ret = collect_all(_pkg)
+    try:
+        tmp_ret = collect_all(_pkg)
+    except Exception as _e:
+        print(f'[ERROR] collect_all({_pkg!r}) failed: {_e}', file=sys.stderr)
+        raise
     datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 # aiohttp が依存する multidict / yarl / frozenlist

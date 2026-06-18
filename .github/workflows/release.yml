@@ -52,6 +52,8 @@ jobs:
             pydantic `
             aiofiles `
             pillow `
+            "qrcode>=7.4" `
+            aiohttp `
             hatchling `
             "discord.py>=2.3"
           .\.venv\Scripts\pip install . --no-deps
