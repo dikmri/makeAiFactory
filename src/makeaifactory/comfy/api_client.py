@@ -88,10 +88,11 @@ class ComfyApiClient:
                 if event_prompt_id and event_prompt_id != prompt_id:
                     continue
 
+                node_raw = data.get("node")
                 event = ComfyProgressEvent(
                     event_type=event_type,
                     prompt_id=event_prompt_id or prompt_id,
-                    node_id=str(data.get("node", "")),
+                    node_id="" if node_raw is None else str(node_raw),
                     step=data.get("value", 0),
                     max_steps=data.get("max", 0),
                     raw=msg,

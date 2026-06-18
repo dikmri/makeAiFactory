@@ -42,8 +42,12 @@ def _job_overall_pct(p: JobProgress) -> float:
 
 
 def _task_pct(p: JobProgress) -> float:
-    """現在のステップバーに表示する進捗。生成中以外は不定 (-1)。"""
-    return p.percent if p.state == JobState.GENERATING else -1.0
+    """現在のステップバーに表示する進捗。生成中以外・KSampler未開始は不定 (-1)。"""
+    if p.state != JobState.GENERATING:
+        return -1.0
+    if p.total_steps <= 0:
+        return -1.0
+    return p.percent
 from .core.discord_bot_controller import DiscordBotController
 from .gui.batch_dialog import BatchDialog
 from .gui.dev_mode_dialog import DevModeDialog

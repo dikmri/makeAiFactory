@@ -86,13 +86,13 @@ class ProgressTracker:
             pct = self._progress.percent
             self._progress.message = f"Wan2.2 動画生成中... {pct:.0f}%"
 
-        elif etype == "executed":
-            self._progress.state = JobState.RESOLVING_OUTPUT
-            self._progress.message = "動画を取得しています..."
-
         elif etype == "execution_error":
             self._progress.state = JobState.FAILED
             self._progress.message = "生成エラー"
+
+        else:
+            # executed / execution_cached などはコールバックを呼ばない
+            return
 
         self._notify()
 

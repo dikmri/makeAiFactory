@@ -147,6 +147,7 @@ class JobController:
 
         # history 取得
         job.status = JobState.RESOLVING_OUTPUT
+        _notify(on_progress, JobProgress(state=JobState.RESOLVING_OUTPUT, message="動画を取得しています..."))
         history = await client.get_history(prompt_id)
         with (job_dir / "history.json").open("w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)

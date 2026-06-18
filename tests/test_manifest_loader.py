@@ -17,7 +17,7 @@ def test_runtime_manifest_loads():
         data = json.load(f)
     rm = RuntimeManifest.from_dict(data)
     assert rm.python_version == "3.13"
-    assert rm.torch_cuda_variant == "cu124"
+    assert rm.torch_cuda_variant == "cu128"
 
 
 def test_model_manifest_loads():
