@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import sys
 import threading
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .gui.icon_data import app_icon
 
-from .constants import APP_NAME, SUPPORTED_IMAGE_EXTENSIONS
+from .constants import APP_NAME, APP_VERSION, SUPPORTED_IMAGE_EXTENSIONS
 from .core.app_controller import AppController
 from .core.bot_state import write_bot_state
 from .core.install_config import load_runtime_config, save_runtime_config
@@ -272,6 +273,8 @@ def run_app() -> int:
         window.set_sage_attention_available(sage_attention_available)
         window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
         write_bot_state(paths.runtime_root, "idle", ctrl.comfy_port)
+        if os.environ.get("MAF_UPDATE_APPLIED"):
+            window.update_status(f"✓ v{APP_VERSION} にアップデートされました")
         if settings.discord_bot_enabled and settings.discord_token:
             _start_discord_bot()
 
