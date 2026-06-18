@@ -5,8 +5,8 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -22,6 +22,39 @@ from PySide6.QtWidgets import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def make_qr_pixmap(qr_url: str, target_size: int = 240) -> QPixmap | None:
+    """qrcode の行列から Qt で直接 QR コード画像を生成する (PIL 不要)。
+
+    PIL バイナリが frozen ビルドで読み込めないケースに対応するため、
+    qrcode.get_matrix() で取得した真偽値行列を QPainter で直接描画する。
+    """
+    try:
+        from qrcode import QRCode  # type: ignore[import]
+        qr = QRCode(border=2)
+        qr.add_data(qr_url)
+        qr.make(fit=True)
+        matrix = qr.get_matrix()
+        n = len(matrix)
+        cell = max(4, target_size // n)
+        img_size = n * cell
+
+        qimg = QImage(img_size, img_size, QImage.Format.Format_RGB888)
+        qimg.fill(0xFFFFFF)
+        painter = QPainter(qimg)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0))
+        for r, row in enumerate(matrix):
+            for c, filled in enumerate(row):
+                if filled:
+                    painter.drawRect(QRect(c * cell, r * cell, cell, cell))
+        painter.end()
+        return QPixmap.fromImage(qimg)
+    except Exception:
+        logger.exception("QR コード生成失敗")
+        return None
+
 
 _STYLE = """
 QDialog, QWidget {
@@ -354,30 +387,15 @@ class RemoteRoomDialog(QDialog):
             QApplication.clipboard().setText(text)
 
     def _generate_qr(self, url: str) -> None:
-        try:
-            import io
-            import qrcode  # type: ignore[import]
-            pin = getattr(self, "_public_pin", "")
-            qr_url = f"{url}?pin={pin}" if pin else url
-            qr = qrcode.QRCode(box_size=6, border=2)
-            qr.add_data(qr_url)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="white", back_color="#0f0f1a")
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
-            pixmap = QPixmap()
-            pixmap.loadFromData(buf.read())
-            self._qr_label.setPixmap(pixmap.scaled(
-                240, 240,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            ))
+        pin = getattr(self, "_public_pin", "")
+        qr_url = f"{url}?pin={pin}" if pin else url
+        pixmap = make_qr_pixmap(qr_url, 240)
+        if pixmap:
+            self._qr_label.setPixmap(pixmap)
             self._qr_label.show()
             hint = "📱 スキャンで入室 (PIN 自動入力)" if pin else "📱 スキャンして入室"
             self._qr_hint_label.setText(hint)
             self._qr_hint_label.show()
-        except Exception as e:
-            logger.debug("QR コード生成スキップ: %s", e)
+        else:
             self._qr_label.hide()
             self._qr_hint_label.hide()

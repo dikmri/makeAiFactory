@@ -56,7 +56,7 @@ from .gui.discord_settings_dialog import DiscordSettingsDialog
 from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
 from .gui.main_window import MainWindow
-from .gui.remote_room_dialog import RemoteRoomDialog
+from .gui.remote_room_dialog import RemoteRoomDialog, make_qr_pixmap
 from .remote_room.controller import RemoteRoomController
 from .remote_room.room_config import RemoteRoomConfig
 
@@ -482,20 +482,11 @@ def run_app() -> int:
     @Slot(str, str)
     def _on_remote_url_ready(url: str, pin: str) -> None:
         """URL 公開時にメインウィンドウの drop ページへ QR を表示する。"""
-        try:
-            import io
-            import qrcode  # type: ignore[import]
-            qr_url = f"{url}?pin={pin}" if pin else url
-            qr = qrcode.QRCode(box_size=5, border=2)
-            qr.add_data(qr_url)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="white", back_color="#0f0f1a")
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            hint = "📱 スキャンで入室 (PIN自動入力)" if pin else "📱 スキャンして入室"
-            window.show_remote_room_qr(buf.getvalue(), hint)
-        except Exception as e:
-            logger.debug("メインウィンドウ QR 生成スキップ: %s", e)
+        qr_url = f"{url}?pin={pin}" if pin else url
+        hint = "📱 スキャンで入室 (PIN自動入力)" if pin else "📱 スキャンして入室"
+        pixmap = make_qr_pixmap(qr_url, 160)
+        if pixmap:
+            window.show_remote_room_qr(pixmap, hint)
 
     @Slot(str, str)
     def _on_remote_status_for_qr(status_code: str, _message: str) -> None:

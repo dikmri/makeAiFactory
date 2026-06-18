@@ -593,14 +593,12 @@ class MainWindow(QMainWindow):
         self._discord_status_lbl.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 8px;")
         self._discord_status_lbl.setText(f"Discord Bot: {indicator} {status_text}")
 
-    def show_remote_room_qr(self, qr_bytes: bytes, hint: str) -> None:
+    def show_remote_room_qr(self, pixmap: QPixmap, hint: str) -> None:
         """投入口公開中 QR コードをドロップページに表示する。"""
-        pixmap = QPixmap()
-        pixmap.loadFromData(qr_bytes)
         self._remote_qr_img_label.setPixmap(pixmap.scaled(
             160, 160,
             Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            Qt.TransformationMode.FastTransformation,
         ))
         self._remote_qr_hint_label.setText(hint)
         self._remote_qr_panel.show()
