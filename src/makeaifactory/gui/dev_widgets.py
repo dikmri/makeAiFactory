@@ -6,7 +6,10 @@ import math
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QConicalGradient, QPainter, QPen
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QDial,
+    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -308,3 +311,152 @@ class CollapseSection(QWidget):
 
     def add_layout(self, lay) -> None:
         self._body_lay.addLayout(lay)
+
+
+# ── LoRA 行/リストウィジェット ────────────────────────────────────────────────
+
+class LoraRowWidget(QWidget):
+    """1スロット分のLoRA設定: ON/OFF・ファイル名 (編集可能コンボ)・強度・削除ボタン。"""
+    changed = Signal()
+    remove_requested = Signal(object)  # self を渡す
+
+    def __init__(
+        self,
+        lora: str = "",
+        strength: float = 1.0,
+        on: bool = True,
+        choices: list[str] | None = None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 1, 0, 1)
+        lay.setSpacing(6)
+
+        self._on_cb = QCheckBox()
+        self._on_cb.setChecked(on)
+        self._on_cb.toggled.connect(lambda _checked: self.changed.emit())
+        lay.addWidget(self._on_cb)
+
+        self._name_combo = QComboBox()
+        self._name_combo.setEditable(True)
+        self._name_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._apply_choices(choices or [], lora)
+        self._name_combo.currentTextChanged.connect(lambda _text: self.changed.emit())
+        lay.addWidget(self._name_combo, stretch=1)
+
+        self._strength_spin = QDoubleSpinBox()
+        self._strength_spin.setRange(-10.0, 10.0)
+        self._strength_spin.setSingleStep(0.05)
+        self._strength_spin.setDecimals(2)
+        self._strength_spin.setValue(strength)
+        self._strength_spin.setFixedWidth(70)
+        self._strength_spin.valueChanged.connect(lambda _v: self.changed.emit())
+        lay.addWidget(self._strength_spin)
+
+        del_btn = QPushButton("✕")
+        del_btn.setFixedSize(22, 22)
+        del_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {_TEXT_DIM};
+                border: 1px solid {_TRACK}; border-radius: 4px; font-size: 11px;
+            }}
+            QPushButton:hover {{ color: #f88; border-color: #a33; }}
+        """)
+        del_btn.clicked.connect(lambda: self.remove_requested.emit(self))
+        lay.addWidget(del_btn)
+
+    def _apply_choices(self, choices: list[str], current: str) -> None:
+        self._name_combo.blockSignals(True)
+        self._name_combo.clear()
+        self._name_combo.addItems(choices)
+        idx = self._name_combo.findText(current)
+        if idx >= 0:
+            self._name_combo.setCurrentIndex(idx)
+        else:
+            self._name_combo.setCurrentText(current)
+        self._name_combo.blockSignals(False)
+
+    def set_choices(self, choices: list[str]) -> None:
+        self._apply_choices(choices, self._name_combo.currentText())
+
+    def value(self) -> dict:
+        return {
+            "on": self._on_cb.isChecked(),
+            "lora": self._name_combo.currentText().strip(),
+            "strength": round(self._strength_spin.value(), 3),
+        }
+
+
+class LoraListWidget(QWidget):
+    """LoRAスロットを可変長で管理するリスト。「+ LoRAを追加」で無制限に追加できる。"""
+    changed = Signal()
+
+    def __init__(self, title: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._choices: list[str] = []
+        self._rows: list[LoraRowWidget] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 4, 0, 4)
+        outer.setSpacing(4)
+
+        header_row = QHBoxLayout()
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 11px; font-weight: bold;")
+        header_row.addWidget(title_lbl)
+        header_row.addStretch()
+        add_btn = QPushButton("+ LoRAを追加")
+        add_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {_ACCENT};
+                border: 1px solid {_ACCENT}; border-radius: 4px;
+                padding: 2px 8px; font-size: 11px;
+            }}
+            QPushButton:hover {{ background: {_ACCENT}22; }}
+        """)
+        add_btn.clicked.connect(lambda: self.add_row())
+        header_row.addWidget(add_btn)
+        outer.addLayout(header_row)
+
+        self._rows_lay = QVBoxLayout()
+        self._rows_lay.setSpacing(2)
+        outer.addLayout(self._rows_lay)
+
+    def set_choices(self, choices: list[str]) -> None:
+        self._choices = choices
+        for row in self._rows:
+            row.set_choices(choices)
+
+    def add_row(self, lora: str = "", strength: float = 1.0, on: bool = True) -> None:
+        row = LoraRowWidget(lora, strength, on, choices=self._choices)
+        row.changed.connect(self.changed.emit)
+        row.remove_requested.connect(self._remove_row)
+        self._rows.append(row)
+        self._rows_lay.addWidget(row)
+        self.changed.emit()
+
+    def _remove_row(self, row: LoraRowWidget) -> None:
+        self._rows.remove(row)
+        self._rows_lay.removeWidget(row)
+        row.deleteLater()
+        self.changed.emit()
+
+    def clear_rows(self) -> None:
+        for row in list(self._rows):
+            self._rows_lay.removeWidget(row)
+            row.deleteLater()
+        self._rows.clear()
+
+    def set_loras(self, loras: list[dict]) -> None:
+        self.clear_rows()
+        for entry in loras:
+            self.add_row(
+                entry.get("lora", ""),
+                float(entry.get("strength", 1.0)),
+                bool(entry.get("on", True)),
+            )
+
+    def value(self) -> list[dict]:
+        return [row.value() for row in self._rows]

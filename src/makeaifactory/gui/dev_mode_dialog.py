@@ -35,6 +35,7 @@ from .dev_widgets import (
     CollapseSection,
     FaderWidget,
     KnobWidget,
+    LoraListWidget,
     SectionHeader,
     Separator,
 )
@@ -60,34 +61,14 @@ _RESOLUTION_OPTIONS = [
 
 _SAGE_OPTIONS = ["disabled", "auto", "enabled"]
 
-_DEFAULTS = DevModeOverrides(
-    positive_prompt="",
-    negative_prompt="",
-    steps=8,
-    cfg=1.0,
-    motion_cfg=3.0,
-    motion_pass_steps=2,
-    video_length_sec=5,
-    video_fps=16,
-    resolution_mode="Low (480x854 Pixel Count)",
-    upscale_multiplier=2,
-    crf=19,
-    seed=None,
-    sage_attention="disabled",
-    model_shift=7.0,
-    lightx2v_strength=1.0,
-    nag_scale=11.0,
-    nag_alpha=0.25,
-    nag_tau=2.37,
-)
-
 
 # ── シグナル ─────────────────────────────────────────────────────────────────
 
 class _DevSignals(QObject):
-    progress = Signal(JobProgress)
-    done     = Signal(str)   # output_path
-    error    = Signal(str)   # error_message
+    progress     = Signal(JobProgress)
+    done         = Signal(str)   # output_path
+    error        = Signal(str)   # error_message
+    lora_choices = Signal(list)  # ComfyUIから取得したLoRAファイル名一覧
 
 
 # ── バックグラウンドワーカー ─────────────────────────────────────────────────
@@ -198,6 +179,7 @@ class DevModeDialog(QDialog):
         run_job_fn: Callable,
         save_params_fn: Callable[[dict], None],
         load_params: dict,
+        template_defaults: DevModeOverrides | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -207,13 +189,15 @@ class DevModeDialog(QDialog):
         self.setModal(False)
         self._run_job_fn = run_job_fn
         self._save_params_fn = save_params_fn
+        self._template_defaults = template_defaults
         self._input_image: Path | None = None
         self._generating = False
         self._sigs = _DevSignals()
 
-        self._sigs.progress.connect(self._on_progress, Qt.ConnectionType.QueuedConnection)
-        self._sigs.done.connect(self._on_done,         Qt.ConnectionType.QueuedConnection)
-        self._sigs.error.connect(self._on_error,       Qt.ConnectionType.QueuedConnection)
+        self._sigs.progress.connect(self._on_progress,         Qt.ConnectionType.QueuedConnection)
+        self._sigs.done.connect(self._on_done,                 Qt.ConnectionType.QueuedConnection)
+        self._sigs.error.connect(self._on_error,               Qt.ConnectionType.QueuedConnection)
+        self._sigs.lora_choices.connect(self._on_lora_choices, Qt.ConnectionType.QueuedConnection)
 
         self.setStyleSheet(f"""
             QDialog, QWidget {{
@@ -255,7 +239,7 @@ class DevModeDialog(QDialog):
                 background: {_ACCENT};
                 border-color: {_ACCENT};
             }}
-            QSpinBox {{
+            QSpinBox, QDoubleSpinBox {{
                 background: {_BG_CARD};
                 border: 1px solid {_BORDER};
                 border-radius: 5px;
@@ -278,7 +262,10 @@ class DevModeDialog(QDialog):
         """)
 
         self._build_ui()
-        self._load_params(load_params)
+        if load_params:
+            self._load_params(load_params)
+        elif template_defaults is not None:
+            self._load_params(template_defaults.to_dict())
 
     # ── UI 構築 ─────────────────────────────────────────────────────────────
 
@@ -306,6 +293,8 @@ class DevModeDialog(QDialog):
         self._build_video(lay)
         lay.addWidget(Separator())
         self._build_resolution_seed(lay)
+        lay.addWidget(Separator())
+        self._build_lora(lay)
         lay.addWidget(Separator())
         self._build_advanced(lay)
         lay.addStretch()
@@ -480,6 +469,15 @@ class DevModeDialog(QDialog):
         seed_row.addWidget(rand_btn)
         lay.addLayout(seed_row)
 
+    def _build_lora(self, lay: QVBoxLayout) -> None:
+        lay.addWidget(SectionHeader("LORA"))
+
+        self._lora_high_list = LoraListWidget("High ノイズ段")
+        lay.addWidget(self._lora_high_list)
+
+        self._lora_low_list = LoraListWidget("Low ノイズ段")
+        lay.addWidget(self._lora_low_list)
+
     def _build_advanced(self, lay: QVBoxLayout) -> None:
         adv = CollapseSection("上級設定 ADVANCED")
 
@@ -502,11 +500,15 @@ class DevModeDialog(QDialog):
         )
         adv.add_widget(self._shift_fader)
 
-        # lightx2v 強度
-        self._lora_fader = FaderWidget(
-            "lightx2v 強度 (H/L)", 0.0, 2.0, 1.0, decimals=2, step=0.01,
+        # lightx2v 強度 (High/Low 個別)
+        self._lightx2v_high_fader = FaderWidget(
+            "lightx2v 強度 (High)", 0.0, 2.0, 1.0, decimals=2, step=0.01,
         )
-        adv.add_widget(self._lora_fader)
+        adv.add_widget(self._lightx2v_high_fader)
+        self._lightx2v_low_fader = FaderWidget(
+            "lightx2v 強度 (Low)", 0.0, 2.0, 1.0, decimals=2, step=0.01,
+        )
+        adv.add_widget(self._lightx2v_low_fader)
 
         # NAG
         adv.add_widget(SectionHeader("NAG ATTENTION"))
@@ -542,10 +544,13 @@ class DevModeDialog(QDialog):
             seed=None if self._rand_cb.isChecked() else self._seed_spin.value(),
             sage_attention=self._sage_combo.currentText(),
             model_shift=round(self._shift_fader.value(), 2),
-            lightx2v_strength=round(self._lora_fader.value(), 3),
+            lightx2v_strength_high=round(self._lightx2v_high_fader.value(), 3),
+            lightx2v_strength_low=round(self._lightx2v_low_fader.value(), 3),
             nag_scale=self._nag_scale_knob.value(),
             nag_alpha=round(self._nag_alpha_knob.value(), 3),
             nag_tau=round(self._nag_tau_knob.value(), 3),
+            loras_high=self._lora_high_list.value(),
+            loras_low=self._lora_low_list.value(),
         )
         return ov
 
@@ -578,10 +583,13 @@ class DevModeDialog(QDialog):
                 if idx >= 0:
                     self._sage_combo.setCurrentIndex(idx)
             if ov.model_shift is not None:        self._shift_fader.set_value(ov.model_shift)
-            if ov.lightx2v_strength is not None:  self._lora_fader.set_value(ov.lightx2v_strength)
+            if ov.lightx2v_strength_high is not None: self._lightx2v_high_fader.set_value(ov.lightx2v_strength_high)
+            if ov.lightx2v_strength_low is not None:  self._lightx2v_low_fader.set_value(ov.lightx2v_strength_low)
             if ov.nag_scale is not None:           self._nag_scale_knob.set_value(ov.nag_scale)
             if ov.nag_alpha is not None:           self._nag_alpha_knob.set_value(ov.nag_alpha)
             if ov.nag_tau is not None:             self._nag_tau_knob.set_value(ov.nag_tau)
+            if ov.loras_high is not None:          self._lora_high_list.set_loras(ov.loras_high)
+            if ov.loras_low is not None:           self._lora_low_list.set_loras(ov.loras_low)
         except Exception as e:
             logger.warning("dev_mode_params 復元失敗: %s", e)
 
@@ -682,6 +690,31 @@ class DevModeDialog(QDialog):
         self._progress_bar.setValue(0)
         self._status_lbl.setText(f"エラー: {msg}")
         self._status_lbl.setStyleSheet("color: #f88; font-size: 11px;")
+
+    # ── LoRA 選択肢 ───────────────────────────────────────────────────────────
+
+    def fetch_lora_choices(self, fetch_fn: Callable) -> None:
+        """ComfyUIから利用可能なLoRAファイル名一覧を非同期取得する。
+
+        fetch_fn: async () -> list[str]
+        取得できなくても自由入力で利用は継続できるため、失敗は無視する。
+        """
+        sigs = self._sigs
+
+        async def _run() -> None:
+            try:
+                choices = await fetch_fn()
+                sigs.lora_choices.emit(choices)
+            except Exception as e:
+                logger.debug("LoRA一覧取得スキップ: %s", e)
+
+        pool = QThreadPool.globalInstance()
+        pool.start(_DevWorker(_run(), self._sigs))
+
+    @Slot(list)
+    def _on_lora_choices(self, choices: list[str]) -> None:
+        self._lora_high_list.set_choices(choices)
+        self._lora_low_list.set_choices(choices)
 
     # ── ヘルパー ────────────────────────────────────────────────────────────
 

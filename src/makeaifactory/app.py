@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .gui.icon_data import app_icon
 
-from .constants import APP_NAME, APP_VERSION, SUPPORTED_IMAGE_EXTENSIONS
+from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENSIONS
 from .core.app_controller import AppController
 from .core.bot_state import write_bot_state
 from .core.install_config import load_runtime_config, save_runtime_config
@@ -666,13 +666,36 @@ def run_app() -> int:
             job_ctrl = ctrl.get_job_controller()
             return await job_ctrl.run_job(image_path, on_progress=on_progress, dev_overrides=overrides)
 
+        template_defaults = None
+        try:
+            import json
+            from .comfy.workflow_patcher import extract_dev_defaults
+            with paths.runtime_template_json().open("r", encoding="utf-8") as f:
+                raw_template = json.load(f)
+            template_defaults = extract_dev_defaults(raw_template)
+        except Exception as e:
+            logger.warning("開発モードのテンプレート初期値読み込み失敗: %s", e)
+
         dlg = DevModeDialog(
             run_job_fn=_run_job_fn,
             save_params_fn=settings.set_dev_mode_params,
             load_params=settings.dev_mode_params,
+            template_defaults=template_defaults,
             parent=window,
         )
         dlg.show()
+
+        async def _fetch_lora_choices() -> list[str]:
+            from .comfy.api_client import ComfyApiClient
+            client = ComfyApiClient(f"http://{COMFY_HOST}:{ctrl.comfy_port}")
+            info = await client.get_object_info()
+            node_info = info.get("LoraLoaderModelOnly", {})
+            spec = node_info.get("input", {}).get("required", {}).get("lora_name")
+            if spec and isinstance(spec[0], list):
+                return sorted(spec[0])
+            return []
+
+        dlg.fetch_lora_choices(_fetch_lora_choices)
 
     signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
     signals.setup_ready.connect(_on_setup_ready,                Qt.ConnectionType.QueuedConnection)
