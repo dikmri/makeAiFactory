@@ -39,6 +39,7 @@ from .dev_widgets import (
     SectionHeader,
     Separator,
 )
+from .workflow_json_dialog import WorkflowJsonDialog
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,9 @@ class DevModeDialog(QDialog):
                        on_progress: Callable) -> tuple[Path, Any]
     save_params_fn: Callable[[dict], None] — ダイアログを閉じる時にパラメーターを永続化
     load_params: dict — 前回保存したパラメーター (なければ {})
+    workflow_json_text: str — makeAiFactory_api_source.json の生テキスト (空なら非表示)
+    apply_workflow_json_fn: Callable[[str], str] — 編集後テキストを保存・適用する。
+        失敗時はエラーメッセージを、成功時は空文字を返す。
     """
 
     def __init__(
@@ -180,6 +184,8 @@ class DevModeDialog(QDialog):
         save_params_fn: Callable[[dict], None],
         load_params: dict,
         template_defaults: DevModeOverrides | None = None,
+        workflow_json_text: str = "",
+        apply_workflow_json_fn: Callable[[str], str] | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -190,6 +196,9 @@ class DevModeDialog(QDialog):
         self._run_job_fn = run_job_fn
         self._save_params_fn = save_params_fn
         self._template_defaults = template_defaults
+        self._workflow_json_text = workflow_json_text
+        self._apply_workflow_json_fn = apply_workflow_json_fn
+        self._workflow_json_dialog: WorkflowJsonDialog | None = None
         self._input_image: Path | None = None
         self._generating = False
         self._sigs = _DevSignals()
@@ -286,6 +295,8 @@ class DevModeDialog(QDialog):
         lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(8)
 
+        self._build_workflow_json_link(lay)
+        lay.addWidget(Separator())
         self._build_prompts(lay)
         lay.addWidget(Separator())
         self._build_quality(lay)
@@ -365,6 +376,32 @@ class DevModeDialog(QDialog):
         right_lay.addLayout(btn_row)
         right_lay.addStretch()
         root.addWidget(right, stretch=1)
+
+    def _build_workflow_json_link(self, lay: QVBoxLayout) -> None:
+        desc = QLabel(
+            "画像をドロップして動画化するとき、裏側では実際にこのComfyUIワークフロー (API形式) が"
+            "使われています。下のボタンから内容をそのまま確認・編集できます。"
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
+        lay.addWidget(desc)
+
+        btn = QPushButton("📄  ワークフローJSON を表示・編集 (makeAiFactory_api_source.json)")
+        btn.setStyleSheet(self._btn_css("#0d3050", _ACCENT, font_size=12))
+        btn.clicked.connect(self._on_open_workflow_json)
+        btn.setEnabled(bool(self._workflow_json_text and self._apply_workflow_json_fn))
+        lay.addWidget(btn)
+
+    def _on_open_workflow_json(self) -> None:
+        if self._workflow_json_dialog is None:
+            self._workflow_json_dialog = WorkflowJsonDialog(
+                self._workflow_json_text,
+                self._apply_workflow_json_fn,
+                parent=self,
+            )
+        self._workflow_json_dialog.show()
+        self._workflow_json_dialog.raise_()
+        self._workflow_json_dialog.activateWindow()
 
     def _build_prompts(self, lay: QVBoxLayout) -> None:
         lay.addWidget(SectionHeader("PROMPT"))

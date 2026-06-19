@@ -676,11 +676,49 @@ def run_app() -> int:
         except Exception as e:
             logger.warning("開発モードのテンプレート初期値読み込み失敗: %s", e)
 
+        workflow_json_text = ""
+        try:
+            workflow_json_text = paths.api_source_json().read_text(encoding="utf-8")
+        except Exception as e:
+            logger.warning("api_source.json 読み込み失敗: %s", e)
+
+        def _apply_workflow_json(text: str) -> str:
+            import json
+            from .comfy.workflow_sanitizer import generate_analysis_report, sanitize_workflow
+            from .constants import LOADIMAGE_NODE_ID, OUTPUT_VIDEO_NODE_ID
+            try:
+                source = json.loads(text)
+            except json.JSONDecodeError as e:
+                return f"JSON構文エラー: {e}"
+            if not isinstance(source, dict) or not source:
+                return "ワークフローが空です"
+
+            sanitized = sanitize_workflow(source)
+            if not sanitized or OUTPUT_VIDEO_NODE_ID not in sanitized or LOADIMAGE_NODE_ID not in sanitized:
+                return "必須ノード (画像入力/動画出力) が含まれていないため適用できません"
+
+            try:
+                with paths.api_source_json().open("w", encoding="utf-8") as f:
+                    json.dump(source, f, ensure_ascii=False, indent=2)
+                with paths.runtime_template_json().open("w", encoding="utf-8") as f:
+                    json.dump(sanitized, f, ensure_ascii=False, indent=2)
+                report = generate_analysis_report(source, sanitized)
+                with (paths.workflow_dir / "workflow_analysis_report.md").open("w", encoding="utf-8") as f:
+                    f.write(report)
+            except Exception as e:
+                return f"保存に失敗しました: {e}"
+
+            ctrl.reload_workflow_template()
+            logger.info("開発モード: ワークフローJSONを保存・適用しました")
+            return ""
+
         dlg = DevModeDialog(
             run_job_fn=_run_job_fn,
             save_params_fn=settings.set_dev_mode_params,
             load_params=settings.dev_mode_params,
             template_defaults=template_defaults,
+            workflow_json_text=workflow_json_text,
+            apply_workflow_json_fn=_apply_workflow_json,
             parent=window,
         )
         dlg.show()

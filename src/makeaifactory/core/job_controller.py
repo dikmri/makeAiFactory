@@ -58,6 +58,15 @@ class JobController:
         self._current_job: Job | None = None
         self._client: ComfyApiClient | None = None
 
+    def reload_template(self) -> None:
+        """workflow templateをディスクから再読み込みする。
+
+        開発モードでworkflow JSONを直接編集・保存した直後に呼び、
+        以降の生成 (本体/Discord/インターネット投入口いずれも) へ反映させる。
+        """
+        with self._paths.runtime_template_json().open("r", encoding="utf-8") as f:
+            self._template = json.load(f)
+
     async def run_job(
         self,
         input_image: Path,

@@ -258,6 +258,11 @@ class AppController:
                 client = ComfyApiClient(self._server.base_url)
                 await client.wait_until_ready(timeout_sec=COMFY_STARTUP_TIMEOUT)
 
+    def reload_workflow_template(self) -> None:
+        """開発モードでworkflow JSONを編集・保存した後、既存のJobControllerに反映する。"""
+        if self._job_ctrl is not None:
+            self._job_ctrl.reload_template()
+
     def get_job_controller(self) -> JobController:
         if self._job_ctrl is None:
             template = self._load_workflow_template()
