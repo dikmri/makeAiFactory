@@ -70,6 +70,7 @@ class ComfyServerController:
             "--listen", COMFY_HOST,
             "--port", str(self._port),
             "--disable-auto-launch",
+            "--preview-method", "auto",
             *(extra_flags or []),
         ]
 

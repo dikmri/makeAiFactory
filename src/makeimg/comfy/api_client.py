@@ -173,9 +173,20 @@ class ComfyApiClient:
             no_msg_count = 0
 
             if isinstance(raw_msg, bytes):
+                if len(raw_msg) < 8:
+                    logger.debug("短いバイナリメッセージをスキップ: %d bytes", len(raw_msg))
+                    continue
+                import struct
+                event_type_id = struct.unpack(">I", raw_msg[:4])[0]
+                _format_id = struct.unpack(">I", raw_msg[4:8])[0]
+                image_data = raw_msg[8:]
+                logger.info("プレビュー受信: event_type=%d, format=%d, data_len=%d", event_type_id, _format_id, len(image_data))
+                if event_type_id not in (1, 2):
+                    logger.debug("未知のバイナリイベントタイプ: %d, スキップ", event_type_id)
+                    continue
                 event = ComfyProgressEvent(
                     event_type="preview",
-                    preview_data=raw_msg,
+                    preview_data=image_data,
                 )
                 yield event
                 continue

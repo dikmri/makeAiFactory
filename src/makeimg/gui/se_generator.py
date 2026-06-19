@@ -219,6 +219,134 @@ _se_dir: Path | None = None
 _se_files: dict[str, Path] = {}
 
 
+def generate_paren_sound(path: Path | None = None, sample_rate: int = 44100) -> Path:
+    if path is None:
+        path = Path(tempfile.mktemp(suffix=".wav"))
+    duration = 0.05
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        env = math.exp(-t * 80)
+        tone = 0.5 * math.sin(2 * math.pi * 2200 * t)
+        chime = 0.3 * math.sin(2 * math.pi * 3300 * t)
+        pop = 0.2 * math.sin(2 * math.pi * 5500 * t) * math.exp(-t * 200)
+        samples.append((tone + chime + pop) * env * 0.35)
+    return _write_wav(path, samples, sample_rate)
+
+
+def generate_backspace_sound(path: Path | None = None, sample_rate: int = 44100) -> Path:
+    if path is None:
+        path = Path(tempfile.mktemp(suffix=".wav"))
+    duration = 0.05
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        env = math.exp(-t * 120)
+        low = 0.6 * math.sin(2 * math.pi * 900 * t)
+        click = 0.4 * math.sin(2 * math.pi * 2800 * t) * math.exp(-t * 200)
+        samples.append((low + click) * env * 0.35)
+    return _write_wav(path, samples, sample_rate)
+
+
+def generate_delete_sound(path: Path | None = None, sample_rate: int = 44100) -> Path:
+    if path is None:
+        path = Path(tempfile.mktemp(suffix=".wav"))
+    duration = 0.06
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        env = math.exp(-t * 100)
+        mid = 0.5 * math.sin(2 * math.pi * 1100 * t)
+        scratch = 0.3 * math.sin(2 * math.pi * 3500 * t) * math.exp(-t * 150)
+        thud = 0.2 * math.sin(2 * math.pi * 400 * t) * math.exp(-t * 80)
+        samples.append((mid + scratch + thud) * env * 0.35)
+    return _write_wav(path, samples, sample_rate)
+
+
+def generate_shift_sound(path: Path | None = None, sample_rate: int = 44100) -> Path:
+    if path is None:
+        path = Path(tempfile.mktemp(suffix=".wav"))
+    duration = 0.04
+    n = int(sample_rate * duration)
+    samples = []
+    for i in range(n):
+        t = i / sample_rate
+        env = math.exp(-t * 150)
+        click = 0.5 * math.sin(2 * math.pi * 3500 * t) * math.exp(-t * 250)
+        tone = 0.3 * math.sin(2 * math.pi * 1400 * t)
+        samples.append((click + tone) * env * 0.35)
+    return _write_wav(path, samples, sample_rate)
+
+
+def generate_space_sound(path: Path | None = None, sample_rate: int = 44100) -> Path:
+    if path is None:
+        path = Path(tempfile.mktemp(suffix=".wav"))
+    duration = 0.07
+    n = int(sample_rate * duration)
+    samples = []
+    rng = random.Random(99)
+    for i in range(n):
+        t = i / sample_rate
+        env = math.exp(-t * 70)
+        thud = 0.5 * math.sin(2 * math.pi * 500 * t)
+        puff = (rng.random() * 2 - 1) * 0.3 * math.exp(-t * 100)
+        samples.append((thud + puff) * env * 0.4)
+    return _write_wav(path, samples, sample_rate)
+
+
+def generate_complete_sound(path: Path | None = None, sample_rate: int = 44100) -> Path:
+    if path is None:
+        path = Path(tempfile.mktemp(suffix=".wav"))
+    duration = 1.2
+    n = int(sample_rate * duration)
+    samples = [0.0] * n
+    sweeps = [
+        (0.00, 0.38),
+        (0.42, 0.38),
+        (0.84, 0.38),
+    ]
+    for start, dur in sweeps:
+        s = int(start * sample_rate)
+        nd = int(dur * sample_rate)
+        for i in range(nd):
+            if s + i >= n:
+                break
+            t = i / sample_rate
+            p = t / dur
+            freq = 800 + 3200 * (1 - (1 - p) ** 2)
+            env = min(1.0, p * 20) * math.exp(-max(0, (p - 0.3) * 6))
+            tone = 0.6 * math.sin(2 * math.pi * freq * t)
+            shimmer = 0.3 * math.sin(2 * math.pi * freq * 1.5 * t)
+            bell = 0.1 * math.sin(2 * math.pi * freq * 3 * t) * math.exp(-t * 12)
+            samples[s + i] += (tone + shimmer + bell) * env * 0.5
+    peak = max(abs(s) for s in samples) or 1.0
+    scale = 0.75 / peak
+    for i in range(n):
+        samples[i] *= scale
+    return _write_wav(path, samples, sample_rate)
+
+
+def generate_batch_done_sound(path: Path | None = None, sample_rate: int = 44100) -> Path:
+    if path is None:
+        path = Path(tempfile.mktemp(suffix=".wav"))
+    duration = 0.4
+    n = int(sample_rate * duration)
+    samples = [0.0] * n
+    nd = int(0.35 * sample_rate)
+    for i in range(nd):
+        t = i / sample_rate
+        p = t / 0.35
+        freq = 600 + 1800 * (1 - (1 - p) ** 2)
+        env = min(1.0, p * 15) * math.exp(-max(0, (p - 0.4) * 5))
+        tone = 0.7 * math.sin(2 * math.pi * freq * t)
+        bell = 0.3 * math.sin(2 * math.pi * freq * 2 * t) * math.exp(-t * 8)
+        samples[i] += (tone + bell) * env * 0.4
+    return _write_wav(path, samples, sample_rate)
+
+
 def ensure_se_files() -> dict[str, Path]:
     global _se_dir, _se_files
     if _se_files and all(p.exists() for p in _se_files.values()):
@@ -233,5 +361,12 @@ def ensure_se_files() -> dict[str, Path]:
     _se_files["pipe"] = generate_pipe_sound(_se_dir / "pipe.wav")
     _se_files["comma"] = generate_comma_sound(_se_dir / "comma.wav")
     _se_files["colon"] = generate_colon_sound(_se_dir / "colon.wav")
+    _se_files["paren"] = generate_paren_sound(_se_dir / "paren.wav")
+    _se_files["backspace"] = generate_backspace_sound(_se_dir / "backspace.wav")
+    _se_files["delete"] = generate_delete_sound(_se_dir / "delete.wav")
+    _se_files["shift"] = generate_shift_sound(_se_dir / "shift.wav")
+    _se_files["space"] = generate_space_sound(_se_dir / "space.wav")
+    _se_files["complete"] = generate_complete_sound(_se_dir / "complete.wav")
+    _se_files["batch_done"] = generate_batch_done_sound(_se_dir / "batch_done.wav")
     _se_files["save"] = generate_save_sound(_se_dir / "save.wav")
     return dict(_se_files)

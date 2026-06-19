@@ -46,6 +46,7 @@ class ProgressTracker:
 
     def handle_event(self, event: ComfyProgressEvent) -> None:
         if event.event_type == "preview" and event.preview_data:
+            logger.info("プレビューイベント受信: %d bytes", len(event.preview_data))
             self.latest_preview = event.preview_data
             self._progress.message = "画像生成中... (プレビュー更新)"
             self._notify()

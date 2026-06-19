@@ -28,6 +28,10 @@ _DEFAULTS = {
     "last_preset": "",
     "se_batch_mode": "final",
     "gaming_skin": True,
+    "bg_music_enabled": False,
+    "bg_music_url": "https://stream.0nlineradio.com/smooth-jazz",
+    "bg_music_volume": 25,
+    "preview_enabled": True,
 }
 
 
@@ -262,3 +266,31 @@ class SettingsStore:
 
     def set_gaming_skin(self, enabled: bool) -> None:
         self.set("gaming_skin", enabled)
+
+    @property
+    def bg_music_enabled(self) -> bool:
+        return bool(self.get("bg_music_enabled"))
+
+    def set_bg_music_enabled(self, enabled: bool) -> None:
+        self.set("bg_music_enabled", enabled)
+
+    @property
+    def bg_music_url(self) -> str:
+        return str(self.get("bg_music_url") or "https://stream.0nlineradio.com/smooth-jazz")
+
+    def set_bg_music_url(self, url: str) -> None:
+        self.set("bg_music_url", url)
+
+    @property
+    def bg_music_volume(self) -> int:
+        return int(self.get("bg_music_volume") or 25)
+
+    def set_bg_music_volume(self, volume: int) -> None:
+        self.set("bg_music_volume", max(0, min(100, volume)))
+
+    @property
+    def preview_enabled(self) -> bool:
+        return bool(self.get("preview_enabled"))
+
+    def set_preview_enabled(self, enabled: bool) -> None:
+        self.set("preview_enabled", enabled)

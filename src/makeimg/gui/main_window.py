@@ -6,8 +6,9 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal, Slot, QTimer
+from PySide6.QtCore import QSize, Qt, Signal, Slot, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QImage, QKeySequence, QLinearGradient, QPixmap
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -309,17 +310,6 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(gen_group)
 
-        progress_group = QGroupBox("進捗")
-        progress_layout = QVBoxLayout(progress_group)
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        progress_layout.addWidget(self._progress_bar)
-        self._progress_msg = QLabel("")
-        self._progress_msg.setStyleSheet("font-size: 12px; color: #aaa;")
-        progress_layout.addWidget(self._progress_msg)
-        left_layout.addWidget(progress_group)
-
         left_layout.addStretch()
 
         right_panel = QWidget()
@@ -339,6 +329,14 @@ class MainWindow(QMainWindow):
         preview_layout.addWidget(self._preview_label)
 
         self._preview_pixmap: QPixmap | None = None
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        preview_layout.addWidget(self._progress_bar)
+        self._progress_msg = QLabel("")
+        self._progress_msg.setStyleSheet("font-size: 12px; color: #aaa;")
+        preview_layout.addWidget(self._progress_msg)
 
         right_layout.addWidget(preview_group, 3)
 
@@ -380,6 +378,7 @@ class MainWindow(QMainWindow):
         self._se_batch_callback = None
         self._se_volume_callback = None
         self._always_on_top_callback = None
+        self._preview_enabled_callback = None
         self._naming_pattern_cb = None
         self._current_naming_pattern = "{timestamp}_{seed}"
         self._gaming_skin_active = False
@@ -395,6 +394,11 @@ class MainWindow(QMainWindow):
         self._gradient_timer.setInterval(50)
         self._gradient_timer.timeout.connect(self._update_gradient_animation)
         self._is_generating = False
+        self._bg_player = QMediaPlayer(self)
+        self._bg_audio = QAudioOutput(self)
+        self._bg_player.setAudioOutput(self._bg_audio)
+        self._bg_audio.setVolume(0.3)
+        self._bg_playing = False
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
@@ -439,6 +443,12 @@ class MainWindow(QMainWindow):
         self._always_on_top_action.setChecked(False)
         self._always_on_top_action.triggered.connect(self._on_always_on_top_toggled)
         settings_menu.addAction(self._always_on_top_action)
+
+        self._preview_enabled_action = QAction("中間プレビュー表示", self)
+        self._preview_enabled_action.setCheckable(True)
+        self._preview_enabled_action.setChecked(True)
+        self._preview_enabled_action.triggered.connect(self._on_preview_enabled_toggled)
+        settings_menu.addAction(self._preview_enabled_action)
 
         settings_menu.addSeparator()
         vram_menu = settings_menu.addMenu("VRAMモード")
@@ -493,6 +503,30 @@ class MainWindow(QMainWindow):
         self._se_batch_group = QActionGroup(self)
         self._se_batch_group.addAction(self._se_batch_each_action)
         self._se_batch_group.addAction(self._se_batch_final_action)
+
+        settings_menu.addSeparator()
+        bg_menu = settings_menu.addMenu("生成中BGM")
+        self._bg_url_action = QAction("BGM URLを設定...", self)
+        self._bg_url_action.triggered.connect(self._set_bg_url)
+        bg_menu.addAction(self._bg_url_action)
+        self._bg_enabled_action = QAction("生成中にBGMを再生する", self)
+        self._bg_enabled_action.setCheckable(True)
+        self._bg_enabled_action.setChecked(False)
+        self._bg_enabled_action.triggered.connect(self._toggle_bg_music)
+        bg_menu.addAction(self._bg_enabled_action)
+        bg_menu.addSeparator()
+        vol_label = QAction("音量:", self)
+        vol_label.setEnabled(False)
+        bg_menu.addAction(vol_label)
+        self._bg_volume_group = QActionGroup(self)
+        for vol in (10, 25, 50, 75, 100):
+            act = QAction(f"{vol}%", self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda checked, v=vol: self._set_bg_volume(v))
+            self._bg_volume_group.addAction(act)
+            bg_menu.addAction(act)
+            if vol == 25:
+                act.setChecked(True)
 
         help_menu = menu_bar.addMenu("ヘルプ")
         log_action = QAction("ログを開く", self)
@@ -558,6 +592,16 @@ class MainWindow(QMainWindow):
         self._apply_always_on_top(checked)
         if self._always_on_top_callback:
             self._always_on_top_callback(checked)
+
+    def _on_preview_enabled_toggled(self, checked: bool) -> None:
+        if self._preview_enabled_callback:
+            self._preview_enabled_callback(checked)
+
+    def set_preview_enabled_callback(self, cb) -> None:
+        self._preview_enabled_callback = cb
+
+    def set_preview_enabled_checked(self, checked: bool) -> None:
+        self._preview_enabled_action.setChecked(checked)
 
     def set_se_enabled_callback(self, cb) -> None:
         self._se_enabled_callback = cb
@@ -666,6 +710,62 @@ class MainWindow(QMainWindow):
         self._gaming_skin_action.setChecked(checked)
         self._toggle_gaming_skin(checked)
 
+    def set_bg_music_callback(self, cb) -> None:
+        self._bg_music_cb = cb
+
+    def set_bg_music_enabled(self, enabled: bool) -> None:
+        self._bg_enabled_action.setChecked(enabled)
+
+    def set_bg_music_volume(self, volume: int) -> None:
+        self._bg_audio.setVolume(volume / 100.0)
+
+    def _toggle_bg_music(self, checked: bool) -> None:
+        if checked and self._bg_url:
+            self._bg_player.setSource(QUrl(self._bg_url))
+            self._bg_player.play()
+            self._bg_playing = True
+        else:
+            self._bg_player.stop()
+            self._bg_playing = False
+        if hasattr(self, "_bg_music_cb") and self._bg_music_cb:
+            self._bg_music_cb(checked)
+
+    def _set_bg_volume(self, volume: int) -> None:
+        self._bg_audio.setVolume(volume / 100.0)
+        if hasattr(self, "_bg_volume_cb") and self._bg_volume_cb:
+            self._bg_volume_cb(volume)
+
+    def set_bg_volume_callback(self, cb) -> None:
+        self._bg_volume_cb = cb
+
+    def _set_bg_url(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+        url, ok = QInputDialog.getText(
+            self, "BGM URL", "ストリーミングラジオのURLを入力:\n(Smooth Jazz, Lo-Fi, Synthwaveなど)",
+            text=self._bg_url,
+        )
+        if ok and url.strip():
+            self._bg_url = url.strip()
+        if hasattr(self, "_bg_music_cb") and self._bg_music_cb:
+            self._bg_music_cb(checked)
+
+    def _set_bg_volume(self, volume: int) -> None:
+        self._bg_audio.setVolume(volume / 100.0)
+        if hasattr(self, "_bg_volume_cb") and self._bg_volume_cb:
+            self._bg_volume_cb(volume)
+
+    def set_bg_volume_callback(self, cb) -> None:
+        self._bg_volume_cb = cb
+
+    def _set_bg_url(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+        url, ok = QInputDialog.getText(
+            self, "BGM URL", "ストリーミングラジオのURLを入力:\n(Smooth Jazz, Lo-Fi, Synthwaveなど)",
+            text=self._bg_url if hasattr(self, "_bg_url") else "",
+        )
+        if ok and url.strip():
+            self._bg_url = url.strip()
+
     def _update_n_btn_label(self, value: int) -> None:
         self._gen_n_btn.setText(f"{value}回生成")
 
@@ -708,9 +808,15 @@ class MainWindow(QMainWindow):
         else:
             self._loading_clock.stop()
             self._loading_clock.hide()
+            if self._bg_enabled_action.isChecked():
+                self._bg_player.play()
+                self._bg_playing = True
 
     def hide_generating(self) -> None:
         self._is_generating = False
+        if self._bg_playing:
+            self._bg_player.stop()
+            self._bg_playing = False
         if self._loading_clock.isVisible():
             self._loading_clock.finish_setup()
         self._progress_msg.setText("")
@@ -744,6 +850,8 @@ class MainWindow(QMainWindow):
 
     def show_preview_image(self, image: QImage) -> None:
         if image.isNull():
+            return
+        if not self._preview_enabled_action.isChecked():
             return
         pixmap = QPixmap.fromImage(image)
         self._preview_pixmap = pixmap
@@ -1255,6 +1363,7 @@ class MainWindow(QMainWindow):
         if isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyPress:
             if self._gaming_skin_active:
                 text = event.text()
+                key = event.key()
                 if text == '{':
                     self._loading_clock.play_special_key("brace_open")
                 elif text == '}':
@@ -1265,7 +1374,17 @@ class MainWindow(QMainWindow):
                     self._loading_clock.play_special_key("comma")
                 elif text == ':':
                     self._loading_clock.play_special_key("colon")
-                elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                elif text == '(':
+                    self._loading_clock.play_special_key("paren")
+                elif key == Qt.Key.Key_Backspace:
+                    self._loading_clock.play_special_key("backspace")
+                elif key == Qt.Key.Key_Delete:
+                    self._loading_clock.play_special_key("delete")
+                elif key == Qt.Key.Key_Space:
+                    self._loading_clock.play_special_key("space")
+                elif key == Qt.Key.Key_Shift:
+                    self._loading_clock.play_special_key("shift")
+                elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     self._loading_clock.play_enter()
                 elif not event.modifiers():
                     self._loading_clock.play_typekey()

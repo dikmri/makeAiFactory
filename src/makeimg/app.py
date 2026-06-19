@@ -20,6 +20,7 @@ from .core.app_controller import AppController
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
 from .core.paths import AppPaths, _exe_dir
+from .gui.se_generator import ensure_se_files
 from .core.settings_store import SettingsStore
 from .domain.errors import MakeAiFactoryError, SystemUnsupportedError
 from .domain.progress import JobProgress, JobState, SetupProgress, SetupState
@@ -195,15 +196,26 @@ def run_app() -> int:
     window.set_auto_save_toggle_callback(_on_auto_save_toggled)
     window.set_auto_save_checked(settings.auto_save_enabled)
 
-    se = QSoundEffect()
-    se.setSource(QUrl.fromLocalFile(str(paths.complete_se_wav)))
-    se.setVolume(settings.se_volume / 100)
+    se_files = ensure_se_files()
+    complete_se = QSoundEffect()
+    complete_se.setSource(QUrl.fromLocalFile(str(se_files["complete"])))
+    complete_se.setVolume(settings.se_volume / 100)
+
+    batch_done_se = QSoundEffect()
+    batch_done_se.setSource(QUrl.fromLocalFile(str(se_files["batch_done"])))
+    batch_done_se.setVolume(settings.se_volume / 100)
 
     def _play_complete_se() -> None:
         if not settings.se_enabled:
             return
-        se.setVolume(settings.se_volume / 100)
-        se.play()
+        complete_se.setVolume(settings.se_volume / 100)
+        complete_se.play()
+
+    def _play_batch_done_se() -> None:
+        if not settings.se_enabled:
+            return
+        batch_done_se.setVolume(settings.se_volume / 100)
+        batch_done_se.play()
 
     def _on_se_enabled_toggle(checked: bool) -> None:
         settings.set_se_enabled(checked)
@@ -215,6 +227,12 @@ def run_app() -> int:
     window.set_se_volume_callback(_on_se_volume_change)
     window.set_se_enabled_checked(settings.se_enabled)
     window.set_se_volume_checked(settings.se_volume)
+
+    def _on_preview_enabled_toggle(checked: bool) -> None:
+        settings.set_preview_enabled(checked)
+
+    window.set_preview_enabled_callback(_on_preview_enabled_toggle)
+    window.set_preview_enabled_checked(settings.preview_enabled)
 
     def _on_se_batch_mode(mode: str) -> None:
         settings.set_se_batch_mode(mode)
@@ -251,6 +269,18 @@ def run_app() -> int:
 
     window.set_naming_pattern_callback(_on_naming_pattern_change)
 
+    def _on_bg_music_toggled(checked: bool) -> None:
+        settings.set_bg_music_enabled(checked)
+
+    def _on_bg_volume_change(volume: int) -> None:
+        settings.set_bg_music_volume(volume)
+
+    window.set_bg_music_callback(_on_bg_music_toggled)
+    window.set_bg_volume_callback(_on_bg_volume_change)
+    window.set_bg_music_enabled(settings.bg_music_enabled)
+    window.set_bg_music_volume(settings.bg_music_volume)
+    window._bg_url = settings.bg_music_url
+
     signals = _AsyncSignals()
     _cancel_flag = threading.Event()
     _gen_mode = "once"
@@ -272,19 +302,14 @@ def run_app() -> int:
     @Slot(object)
     def _on_preview_image(img: QImage) -> None:
         if img is not None and not img.isNull():
+            logger.info("プレビュー画像UI表示: %dx%d", img.width(), img.height())
             window.show_preview_image(img)
+        else:
+            logger.warning("プレビュー画像UI表示スキップ: img is None or null")
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
         window.update_progress(p.message, _job_overall_pct(p))
-        if p.preview_data:
-            img = QImage()
-            img.loadFromData(p.preview_data)
-            if not img.isNull():
-                try:
-                    signals.preview_image.emit(img)
-                except RuntimeError:
-                    pass
 
     @Slot(Path, float)
     def _on_job_done(output: Path, elapsed_sec: float) -> None:
@@ -293,8 +318,10 @@ def run_app() -> int:
         window.show_preview(output)
         window.add_to_gallery(output)
 
-        if _gen_mode == "once" or settings.se_batch_mode == "each":
+        if _gen_mode == "once":
             _play_complete_se()
+        elif settings.se_batch_mode == "each":
+            _play_batch_done_se()
 
         if _gen_mode == "once":
             window.hide_generating()
@@ -387,9 +414,22 @@ def run_app() -> int:
     async def _run_single_job(positive: str, negative: str, workflow: str) -> None:
         def _cb(p: JobProgress):
             try:
-                signals.job_progress.emit(p)
-            except RuntimeError:
-                pass
+                if p.preview_data:
+                    img = QImage()
+                    img.loadFromData(p.preview_data)
+                    if not img.isNull():
+                        logger.info("プレビューQImage生成成功: %dx%d", img.width(), img.height())
+                        signals.preview_image.emit(img)
+                    else:
+                        logger.warning("プレビューQImage生成失敗: loadFromData returned null")
+                signals.job_progress.emit(JobProgress(
+                    state=p.state,
+                    message=p.message,
+                    step=p.step,
+                    total_steps=p.total_steps,
+                ))
+            except Exception as e:
+                logger.error("プレビューコールバックエラー: %s", e)
         try:
             settings.set_active_workflow(workflow)
             settings.set_positive_prompt(positive)
@@ -447,9 +487,20 @@ def run_app() -> int:
                 else:
                     msg = f"生成中 ({idx + 1}/{total})"
                 try:
+                    if p.preview_data:
+                        img = QImage()
+                        img.loadFromData(p.preview_data)
+                        if not img.isNull():
+                            signals.preview_image.emit(img)
                     signals.batch_progress.emit(msg, pct)
-                except RuntimeError:
-                    pass
+                    signals.job_progress.emit(JobProgress(
+                        state=p.state,
+                        message=p.message,
+                        step=p.step,
+                        total_steps=p.total_steps,
+                    ))
+                except Exception as e:
+                    logger.error("バッチプレビューコールバックエラー: %s", e)
 
             try:
                 settings.set_active_workflow(workflow)
