@@ -76,6 +76,13 @@ class _AsyncSignals(QObject):
     app_quit            = Signal()
 
 
+class _UpdateCheckSignals(QObject):
+    checked      = Signal(object)  # ReleaseInfo | None
+    failed       = Signal(str)
+    progress     = Signal(float)
+    apply_skipped = Signal()       # devモード (非frozen) のため適用をスキップした。frozenではプロセスが終了するため到達しない
+
+
 class _Worker(QRunnable):
     def __init__(self, coro, signals: _AsyncSignals):
         super().__init__()
@@ -234,6 +241,81 @@ def run_app() -> int:
 
     window.set_always_on_top_callback(_on_always_on_top_toggle)
     window.set_always_on_top(settings.always_on_top)
+
+    def _on_check_update_requested(dlg) -> None:
+        from .core.updater import check_for_update
+        dlg.show_checking()
+        upd_signals = _UpdateCheckSignals()
+
+        def _on_checked(release) -> None:
+            if release is None:
+                dlg.show_up_to_date()
+            else:
+                dlg.show_update_available(release.version)
+
+        def _on_failed(message: str) -> None:
+            dlg.show_check_failed(message)
+
+        upd_signals.checked.connect(_on_checked, Qt.ConnectionType.QueuedConnection)
+        upd_signals.failed.connect(_on_failed,   Qt.ConnectionType.QueuedConnection)
+
+        async def _do_check() -> None:
+            try:
+                release = await asyncio.wait_for(check_for_update(), timeout=15.0)
+                upd_signals.checked.emit(release)
+            except asyncio.TimeoutError:
+                upd_signals.failed.emit("タイムアウトしました")
+            except Exception as e:
+                upd_signals.failed.emit(str(e))
+
+        pool = QThreadPool.globalInstance()
+        pool.start(_Worker(_do_check(), upd_signals))
+
+    def _on_update_now_requested(dlg) -> None:
+        from .core.updater import apply_update_and_restart, check_for_update, download_update
+        upd_signals = _UpdateCheckSignals()
+
+        def _on_progress(pct: float) -> None:
+            dlg.show_downloading(pct * 100)
+
+        def _on_failed(message: str) -> None:
+            dlg.show_check_failed(message)
+
+        def _on_apply_skipped() -> None:
+            dlg.show_apply_skipped_dev_mode()
+            QMessageBox.information(
+                window, "アップデート",
+                "開発モードで実行中のため、アップデートの適用はスキップされました。",
+            )
+
+        upd_signals.progress.connect(_on_progress,      Qt.ConnectionType.QueuedConnection)
+        upd_signals.failed.connect(_on_failed,           Qt.ConnectionType.QueuedConnection)
+        upd_signals.apply_skipped.connect(_on_apply_skipped, Qt.ConnectionType.QueuedConnection)
+
+        async def _do_update() -> None:
+            try:
+                release = await asyncio.wait_for(check_for_update(), timeout=15.0)
+                if release is None:
+                    upd_signals.failed.emit("最新バージョンが見つかりませんでした")
+                    return
+
+                def _cb(pct: float) -> None:
+                    upd_signals.progress.emit(pct)
+                zip_path = await download_update(release, progress_cb=_cb)
+                apply_update_and_restart(zip_path)
+                # frozen モードでは os._exit(0) が呼ばれここには到達しない。
+                # 到達した場合は dev モードでスキップされたことを意味する。
+                upd_signals.apply_skipped.emit()
+            except asyncio.TimeoutError:
+                upd_signals.failed.emit("タイムアウトしました")
+            except Exception as e:
+                upd_signals.failed.emit(str(e))
+
+        pool = QThreadPool.globalInstance()
+        pool.start(_Worker(_do_update(), upd_signals))
+
+    window.set_check_update_callback(_on_check_update_requested)
+    window.set_update_now_callback(_on_update_now_requested)
 
     signals = _AsyncSignals()
 
@@ -790,11 +872,17 @@ def run_app() -> int:
 
     @Slot()
     def _on_batch_requested() -> None:
-        dlg = BatchDialog(parent=window)
+        dlg = BatchDialog(
+            parent=window,
+            default_input=settings.batch_input_folder,
+            default_output=settings.batch_output_folder,
+        )
         if dlg.exec() != BatchDialog.DialogCode.Accepted:
             return
         input_folder = dlg.input_folder()
         output_folder = dlg.output_folder()
+        settings.set_batch_input_folder(str(input_folder))
+        settings.set_batch_output_folder(str(output_folder))
 
         write_bot_state(paths.runtime_root, "batch")
         _batch_cancel.clear()
@@ -811,10 +899,17 @@ def run_app() -> int:
             pool.start(_Worker(_cancel_current_job(), signals))
 
         def _do_finish_after_current() -> None:
-            _batch_cancel.set()
-            _batch_finish_after_current.set()
-            window.update_status("現在の生成が完了したら停止します...")
-            window.hide_finish_current_btn()
+            if _batch_finish_after_current.is_set():
+                # 既に予約済み → 生成完了前ならここで取り消せる
+                _batch_finish_after_current.clear()
+                _batch_cancel.clear()
+                window.update_status("フォルダ生成を続行します")
+                window.set_finish_current_btn_text("現在の生成で終了")
+            else:
+                _batch_cancel.set()
+                _batch_finish_after_current.set()
+                window.update_status("現在の生成が完了したら停止します...")
+                window.set_finish_current_btn_text("終了予約を取り消す")
 
         window.enter_batch_mode()
         window.update_batch_progress("フォルダ生成を開始しています...", 0.0, 0.0, -1.0)

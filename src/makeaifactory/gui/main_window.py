@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import APP_NAME, APP_VERSION
 from ..domain.progress import JobProgress, SetupProgress, SetupState
+from .about_dialog import AboutDialog
 from .drop_area import DropArea
 from .error_dialog import ErrorDialog
 from .progress_view import ProgressView
@@ -316,6 +317,8 @@ class MainWindow(QMainWindow):
         self._vram_mode_callback = None
         self._preset_change_callback = None
         self._preset_add_callback = None
+        self._check_update_cb = None
+        self._update_now_cb = None
 
     def set_paths(self, logs_dir: Path, output_dir: Path) -> None:
         self._logs_dir = logs_dir
@@ -490,6 +493,9 @@ class MainWindow(QMainWindow):
     def show_finish_current_btn(self, callback) -> None:
         self._progress_view.show_finish_current(callback)
 
+    def set_finish_current_btn_text(self, text: str) -> None:
+        self._progress_view.set_finish_current_text(text)
+
     def hide_finish_current_btn(self) -> None:
         self._progress_view.hide_finish_current()
 
@@ -652,14 +658,18 @@ class MainWindow(QMainWindow):
                 self._repair_callback()
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            f"{APP_NAME}について",
-            f"{APP_NAME} v{APP_VERSION}\n\n"
-            "画像をドラッグ＆ドロップするだけでAI動画を生成するアプリです。\n"
-            "生成はすべてローカルPCで行われます。\n"
-            "入力画像・生成動画が外部送信されることはありません。",
-        )
+        dlg = AboutDialog(APP_NAME, APP_VERSION, self)
+        if self._check_update_cb:
+            dlg.check_update_requested.connect(lambda: self._check_update_cb(dlg))
+        if self._update_now_cb:
+            dlg.update_now_requested.connect(lambda: self._update_now_cb(dlg))
+        dlg.exec()
+
+    def set_check_update_callback(self, cb) -> None:
+        self._check_update_cb = cb
+
+    def set_update_now_callback(self, cb) -> None:
+        self._update_now_cb = cb
 
     def closeEvent(self, event) -> None:
         self._result_view.stop_playback()

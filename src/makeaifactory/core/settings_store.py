@@ -17,6 +17,8 @@ _DEFAULTS = {
     "sage_attention_enabled": False,  # 高速化(SageAttention)。未インストール環境では無視されdisabledのまま
     "auto_save_folder": "",       # 動画完成時の自動保存先フォルダ (パスのみ。有効/無効は別フラグ)
     "auto_save_enabled": False,   # 自動保存のON/OFF。フォルダ設定とは独立
+    "batch_input_folder": "",     # フォルダ一括生成: 前回入力した入力フォルダ
+    "batch_output_folder": "",    # フォルダ一括生成: 前回入力した出力フォルダ
     "se_enabled": True,            # 完成通知音のON/OFF (マスタースイッチ)
     "se_volume": 75,                # 完成通知音の音量 (0-100)
     "se_on_batch_complete": True,   # フォルダ(バッチ)生成完了時にも通知音を鳴らすか
@@ -134,6 +136,20 @@ class SettingsStore:
 
     def set_auto_save_enabled(self, enabled: bool) -> None:
         self.set("auto_save_enabled", enabled)
+
+    @property
+    def batch_input_folder(self) -> str:
+        return str(self.get("batch_input_folder") or "")
+
+    def set_batch_input_folder(self, folder: str) -> None:
+        self.set("batch_input_folder", folder)
+
+    @property
+    def batch_output_folder(self) -> str:
+        return str(self.get("batch_output_folder") or "")
+
+    def set_batch_output_folder(self, folder: str) -> None:
+        self.set("batch_output_folder", folder)
 
     @property
     def se_enabled(self) -> bool:

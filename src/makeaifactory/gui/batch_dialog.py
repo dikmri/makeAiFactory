@@ -19,13 +19,18 @@ from PySide6.QtWidgets import (
 class BatchDialog(QDialog):
     """入力フォルダと出力フォルダを指定するバッチ処理ダイアログ。"""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        default_input: str = "",
+        default_output: str = "",
+    ):
         super().__init__(parent)
         self.setWindowTitle("フォルダを一括生成")
         self.setMinimumWidth(480)
-        self._setup_ui()
+        self._setup_ui(default_input, default_output)
 
-    def _setup_ui(self) -> None:
+    def _setup_ui(self, default_input: str, default_output: str) -> None:
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
 
@@ -42,12 +47,14 @@ class BatchDialog(QDialog):
 
         self._input_edit = QLineEdit()
         self._input_edit.setPlaceholderText("画像が入っているフォルダ")
+        self._input_edit.setText(default_input)
         self._input_edit.textChanged.connect(self._validate)
         input_row = self._make_row(self._input_edit, self._browse_input)
         form.addRow("入力フォルダ:", input_row)
 
         self._output_edit = QLineEdit()
         self._output_edit.setPlaceholderText("動画の保存先フォルダ")
+        self._output_edit.setText(default_output)
         self._output_edit.textChanged.connect(self._validate)
         output_row = self._make_row(self._output_edit, self._browse_output)
         form.addRow("出力フォルダ:", output_row)
@@ -81,12 +88,12 @@ class BatchDialog(QDialog):
         return row
 
     def _browse_input(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "入力フォルダを選択")
+        d = QFileDialog.getExistingDirectory(self, "入力フォルダを選択", self._input_edit.text().strip())
         if d:
             self._input_edit.setText(d)
 
     def _browse_output(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "出力フォルダを選択")
+        d = QFileDialog.getExistingDirectory(self, "出力フォルダを選択", self._output_edit.text().strip())
         if d:
             self._output_edit.setText(d)
 

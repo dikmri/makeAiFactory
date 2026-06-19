@@ -366,7 +366,11 @@ class ProgressView(QWidget):
         except RuntimeError:
             pass
         self._finish_current_btn.clicked.connect(callback)
+        self._finish_current_btn.setText("現在の生成で終了")
         self._finish_current_btn.setVisible(True)
+
+    def set_finish_current_text(self, text: str) -> None:
+        self._finish_current_btn.setText(text)
 
     def hide_finish_current(self) -> None:
         self._finish_current_btn.setVisible(False)

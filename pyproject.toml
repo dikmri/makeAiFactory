@@ -1,6 +1,6 @@
 [project]
 name = "makeaifactory"
-version = "1.0.12"
+version = "1.0.13"
 description = "ComfyUI/Wan2.2を隠蔽したD&D動画生成アプリ"
 requires-python = ">=3.12"
 dependencies = [
