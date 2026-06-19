@@ -6,9 +6,10 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import APP_NAME, APP_VERSION
 from ..domain.progress import JobProgress, SetupProgress, SetupState
+from .about_dialog import AboutDialog
 from .drop_area import DropArea
 from .error_dialog import ErrorDialog
 from .progress_view import ProgressView
@@ -35,6 +37,9 @@ _PAGE_RESULT = 2
 class MainWindow(QMainWindow):
     image_dropped = Signal(Path)
     batch_requested = Signal()
+    discord_settings_requested = Signal()
+    dev_mode_requested = Signal()
+    remote_room_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -113,6 +118,39 @@ class MainWindow(QMainWindow):
         self._batch_btn.clicked.connect(self.batch_requested)
         dp_layout.addWidget(self._batch_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # インターネット投入口 公開中 QR パネル (投入口が running の間だけ表示)
+        self._remote_qr_panel = QWidget()
+        from PySide6.QtWidgets import QFrame
+        self._remote_qr_panel.setStyleSheet(
+            "background: #12122a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 8px;"
+        )
+        rqr_layout = QVBoxLayout(self._remote_qr_panel)
+        rqr_layout.setSpacing(4)
+        rqr_layout.setContentsMargins(12, 8, 12, 8)
+
+        rqr_title = QLabel("🌐 インターネット投入口 公開中")
+        rqr_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rqr_title.setStyleSheet(
+            "font-size: 12px; color: #66bb6a; font-weight: bold;"
+            "background: transparent; border: none;"
+        )
+        rqr_layout.addWidget(rqr_title)
+
+        self._remote_qr_img_label = QLabel()
+        self._remote_qr_img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._remote_qr_img_label.setStyleSheet("background: transparent; border: none;")
+        rqr_layout.addWidget(self._remote_qr_img_label)
+
+        self._remote_qr_hint_label = QLabel()
+        self._remote_qr_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._remote_qr_hint_label.setStyleSheet(
+            "font-size: 11px; color: #aaa; background: transparent; border: none;"
+        )
+        rqr_layout.addWidget(self._remote_qr_hint_label)
+
+        self._remote_qr_panel.hide()
+        dp_layout.addWidget(self._remote_qr_panel, alignment=Qt.AlignmentFlag.AlignCenter)
+
         self._stack.addWidget(drop_page)  # _PAGE_DROP
 
         self._progress_view = ProgressView()
@@ -125,6 +163,10 @@ class MainWindow(QMainWindow):
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
+
+        self._discord_status_lbl = QLabel("Discord Bot: 未設定")
+        self._discord_status_lbl.setStyleSheet("color: #555; font-size: 11px; padding: 0 8px;")
+        self._status_bar.addPermanentWidget(self._discord_status_lbl)
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
@@ -199,6 +241,15 @@ class MainWindow(QMainWindow):
         self._sage_attention_callback = None
 
         settings_menu.addSeparator()
+        discord_action = QAction("Discord Bot 設定...", self)
+        discord_action.triggered.connect(self.discord_settings_requested)
+        settings_menu.addAction(discord_action)
+
+        remote_room_action = QAction("インターネット投入口 β...", self)
+        remote_room_action.triggered.connect(self.remote_room_requested)
+        settings_menu.addAction(remote_room_action)
+
+        settings_menu.addSeparator()
         se_menu = settings_menu.addMenu("完成通知音")
 
         self._se_enabled_action = QAction("通知音を鳴らす", self)
@@ -229,6 +280,13 @@ class MainWindow(QMainWindow):
         self._se_volume_callback = None
 
         help_menu = menu_bar.addMenu("ヘルプ")
+
+        dev_action = QAction("開発モード", self)
+        dev_action.setShortcut("Ctrl+Shift+D")
+        dev_action.triggered.connect(self.dev_mode_requested)
+        help_menu.addAction(dev_action)
+        help_menu.addSeparator()
+
         log_action = QAction("ログを開く", self)
         log_action.triggered.connect(self._open_logs)
         help_menu.addAction(log_action)
@@ -259,6 +317,8 @@ class MainWindow(QMainWindow):
         self._vram_mode_callback = None
         self._preset_change_callback = None
         self._preset_add_callback = None
+        self._check_update_cb = None
+        self._update_now_cb = None
 
     def set_paths(self, logs_dir: Path, output_dir: Path) -> None:
         self._logs_dir = logs_dir
@@ -430,11 +490,21 @@ class MainWindow(QMainWindow):
         logger.info("クリップボードから画像を貼り付け: %s (%dx%d)", tmp, img.width(), img.height())
         self.image_dropped.emit(tmp)
 
+    def show_finish_current_btn(self, callback) -> None:
+        self._progress_view.show_finish_current(callback)
+
+    def set_finish_current_btn_text(self, text: str) -> None:
+        self._progress_view.set_finish_current_text(text)
+
+    def hide_finish_current_btn(self) -> None:
+        self._progress_view.hide_finish_current()
+
     @Slot()
     def show_drop_page(self) -> None:
         self._result_view.stop_playback()
         self._progress_view.stop_elapsed()
         self._progress_view.hide_cancel()
+        self._progress_view.hide_finish_current()
         self._drop_area.set_ready()
         self._stack.setCurrentIndex(_PAGE_DROP)
         self._status_bar.clearMessage()
@@ -512,6 +582,37 @@ class MainWindow(QMainWindow):
     def update_status(self, message: str) -> None:
         self._status_bar.showMessage(message)
 
+    def update_discord_status(self, status_text: str) -> None:
+        """Discord Bot の状態をステータスバー右端に反映する。"""
+        if "接続完了" in status_text:
+            color = "#66bb6a"
+            indicator = "●"
+        elif "エラー" in status_text or "無効" in status_text:
+            color = "#f88"
+            indicator = "●"
+        elif "接続中" in status_text or "再接続" in status_text:
+            color = "#ffa726"
+            indicator = "○"
+        else:
+            color = "#555"
+            indicator = "○"
+        self._discord_status_lbl.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 8px;")
+        self._discord_status_lbl.setText(f"Discord Bot: {indicator} {status_text}")
+
+    def show_remote_room_qr(self, pixmap: QPixmap, hint: str) -> None:
+        """投入口公開中 QR コードをドロップページに表示する。"""
+        self._remote_qr_img_label.setPixmap(pixmap.scaled(
+            160, 160,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation,
+        ))
+        self._remote_qr_hint_label.setText(hint)
+        self._remote_qr_panel.show()
+
+    def clear_remote_room_qr(self) -> None:
+        """投入口 QR コードを非表示にする。"""
+        self._remote_qr_panel.hide()
+
     def start_elapsed_timer(self) -> None:
         self._progress_view.start_elapsed()
 
@@ -557,14 +658,18 @@ class MainWindow(QMainWindow):
                 self._repair_callback()
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            f"{APP_NAME}について",
-            f"{APP_NAME} v{APP_VERSION}\n\n"
-            "画像をドラッグ＆ドロップするだけでAI動画を生成するアプリです。\n"
-            "生成はすべてローカルPCで行われます。\n"
-            "入力画像・生成動画が外部送信されることはありません。",
-        )
+        dlg = AboutDialog(APP_NAME, APP_VERSION, self)
+        if self._check_update_cb:
+            dlg.check_update_requested.connect(lambda: self._check_update_cb(dlg))
+        if self._update_now_cb:
+            dlg.update_now_requested.connect(lambda: self._update_now_cb(dlg))
+        dlg.exec()
+
+    def set_check_update_callback(self, cb) -> None:
+        self._check_update_cb = cb
+
+    def set_update_now_callback(self, cb) -> None:
+        self._update_now_cb = cb
 
     def closeEvent(self, event) -> None:
         self._result_view.stop_playback()

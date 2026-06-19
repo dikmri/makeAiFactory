@@ -52,7 +52,10 @@ jobs:
             pydantic `
             aiofiles `
             pillow `
-            hatchling
+            "qrcode>=7.4" `
+            aiohttp `
+            hatchling `
+            "discord.py>=2.3"
           .\.venv\Scripts\pip install . --no-deps
 
       - name: Verify package is importable

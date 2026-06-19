@@ -17,10 +17,24 @@ _DEFAULTS = {
     "sage_attention_enabled": False,  # 高速化(SageAttention)。未インストール環境では無視されdisabledのまま
     "auto_save_folder": "",       # 動画完成時の自動保存先フォルダ (パスのみ。有効/無効は別フラグ)
     "auto_save_enabled": False,   # 自動保存のON/OFF。フォルダ設定とは独立
+    "batch_input_folder": "",     # フォルダ一括生成: 前回入力した入力フォルダ
+    "batch_output_folder": "",    # フォルダ一括生成: 前回入力した出力フォルダ
     "se_enabled": True,            # 完成通知音のON/OFF (マスタースイッチ)
     "se_volume": 75,                # 完成通知音の音量 (0-100)
     "se_on_batch_complete": True,   # フォルダ(バッチ)生成完了時にも通知音を鳴らすか
     "always_on_top": False,         # ウィンドウを常に最前面に表示するか
+    "discord_bot_enabled": False,
+    "discord_token": "",
+    "discord_channel_ids": [],      # list[int]
+    "discord_bot_interrupt": False, # フォルダ生成中に Discord リクエストを割り込ませる
+    "remote_room": {
+        "room_ttl_minutes": 180,
+        "require_pin": True,
+        "max_upload_mb": 20,
+        "max_queue_size": 3,
+        "per_session_cooldown_seconds": 600,
+        "output_retention_hours": 24,
+    },
 }
 
 
@@ -124,6 +138,20 @@ class SettingsStore:
         self.set("auto_save_enabled", enabled)
 
     @property
+    def batch_input_folder(self) -> str:
+        return str(self.get("batch_input_folder") or "")
+
+    def set_batch_input_folder(self, folder: str) -> None:
+        self.set("batch_input_folder", folder)
+
+    @property
+    def batch_output_folder(self) -> str:
+        return str(self.get("batch_output_folder") or "")
+
+    def set_batch_output_folder(self, folder: str) -> None:
+        self.set("batch_output_folder", folder)
+
+    @property
     def se_enabled(self) -> bool:
         return bool(self.get("se_enabled"))
 
@@ -151,3 +179,50 @@ class SettingsStore:
 
     def set_always_on_top(self, enabled: bool) -> None:
         self.set("always_on_top", enabled)
+
+    @property
+    def discord_bot_enabled(self) -> bool:
+        return bool(self.get("discord_bot_enabled"))
+
+    def set_discord_bot_enabled(self, enabled: bool) -> None:
+        self.set("discord_bot_enabled", enabled)
+
+    @property
+    def discord_token(self) -> str:
+        return str(self.get("discord_token") or "")
+
+    def set_discord_token(self, token: str) -> None:
+        self.set("discord_token", token)
+
+    @property
+    def discord_channel_ids(self) -> list[int]:
+        v = self.get("discord_channel_ids")
+        if isinstance(v, list):
+            return [int(x) for x in v if isinstance(x, (int, float)) and int(x) > 0]
+        return []
+
+    def set_discord_channel_ids(self, ids: list[int]) -> None:
+        self.set("discord_channel_ids", [int(x) for x in ids])
+
+    @property
+    def discord_bot_interrupt(self) -> bool:
+        return bool(self.get("discord_bot_interrupt"))
+
+    def set_discord_bot_interrupt(self, enabled: bool) -> None:
+        self.set("discord_bot_interrupt", enabled)
+
+    @property
+    def dev_mode_params(self) -> dict:
+        v = self.get("dev_mode_params")
+        return v if isinstance(v, dict) else {}
+
+    def set_dev_mode_params(self, params: dict) -> None:
+        self.set("dev_mode_params", params)
+
+    @property
+    def remote_room_config(self) -> dict:
+        v = self.get("remote_room")
+        return v if isinstance(v, dict) else {}
+
+    def set_remote_room_config(self, config: dict) -> None:
+        self.set("remote_room", config)

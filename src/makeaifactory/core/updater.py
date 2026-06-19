@@ -1,6 +1,7 @@
 """GitHub release auto-update."""
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import shutil
@@ -17,17 +18,89 @@ from ..constants import APP_VERSION, GITHUB_REPO
 
 logger = logging.getLogger(__name__)
 
-# ── Launch flags ────────────────────────────────────────────────────────────
-# DETACHED_PROCESS は使わない:
-#   console アプリ (cmd.exe) に対して「新コンソールを割り当てろ」の意味になり
-#   CREATE_NO_WINDOW と競合して黒窓が出る。
-# 代わりに以下の組み合わせで確実に非表示にする:
-#   CREATE_NO_WINDOW          : ウィンドウを作らない
-#   CREATE_NEW_PROCESS_GROUP  : 親の Ctrl+C 等を継承しない
-#   CREATE_BREAKAWAY_FROM_JOB : 親の Job Object から離脱 (死活連動を防ぐ)
-# + STARTUPINFO.wShowWindow = SW_HIDE で二重に非表示化
-_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-_CREATE_NEW_PROCESS_GROUP  = 0x00000200
+# ── PS1 テンプレート ────────────────────────────────────────────────────────
+# %TEMP% に書き出して ShellExecuteW で起動する。
+# ShellExecute = Explorer サービス経由 → 親の Job Object を継承しない。
+# 15 秒待機: robocopy 直後の Windows Defender スキャン完了を待つ。
+# 起動確認はフルパスで行う: プロセス名だけだと別インスタンスを誤検知する。
+_PS1_TEMPLATE = r"""
+param(
+    [int]$ParentPid,
+    [string]$SrcDir,
+    [string]$DstDir,
+    [string]$ExePath
+)
+$log = Join-Path $DstDir '_update_log.txt'
+function Log($m) { "$(Get-Date -f 'HH:mm:ss') $m" | Out-File $log -Append -Encoding UTF8 }
+Log "start  pid=$ParentPid"
+Log "src=$SrcDir"
+Log "dst=$DstDir"
+Log "exe=$ExePath"
+
+# 1. 旧プロセス終了待ち (最大 30 秒)
+try {
+    $p = Get-Process -Id $ParentPid -ErrorAction SilentlyContinue
+    if ($p) { $null = $p.WaitForExit(30000) }
+    Log "process gone"
+} catch { Log "wait error: $_" }
+
+# 2. Windows Defender スキャン完了を待つ
+Log "sleeping 15s for AV scan"
+Start-Sleep -Seconds 15
+
+# 3. robocopy
+Log "robocopy start"
+$null = & robocopy $SrcDir $DstDir /E /IS /IT /IM /NFL /NDL /NJH /R:3 /W:2
+$rc = $LASTEXITCODE
+Log "robocopy exit=$rc"
+if ($rc -ge 8) { Log "ERROR: robocopy failed exit=$rc"; exit 1 }
+
+# 4. staging ディレクトリ削除
+try {
+    $stagingParent = Split-Path $SrcDir -Parent
+    Remove-Item $stagingParent -Recurse -Force -ErrorAction Stop
+    Log "staging removed"
+} catch { Log "staging remove warn: $_" }
+
+# 5. 既に正しいパスで起動済みかチェック (フルパス一致)
+$already = @(Get-Process -Name 'makeAiFactory' -ErrorAction SilentlyContinue) |
+           Where-Object { $_.Path -ieq $ExePath }
+if ($already) { Log "already running at $ExePath, done"; exit 0 }
+
+# 6. 起動 (3 段フォールバック)
+$launched = $false
+try {
+    Start-Process -FilePath $ExePath -WorkingDirectory $DstDir -ErrorAction Stop
+    Log "launched via Start-Process"
+    $launched = $true
+} catch { Log "Start-Process failed: $_" }
+
+if (-not $launched) {
+    try {
+        Invoke-Item $ExePath -ErrorAction Stop
+        Log "launched via Invoke-Item"
+        $launched = $true
+    } catch { Log "Invoke-Item failed: $_" }
+}
+
+if (-not $launched) {
+    try {
+        $sh = New-Object -ComObject Shell.Application -ErrorAction Stop
+        $sh.ShellExecute($ExePath, '', $DstDir, 'open', 1)
+        Log "launched via Shell.Application"
+        $launched = $true
+    } catch { Log "Shell.Application failed: $_" }
+}
+
+if (-not $launched) {
+    Log "all launch methods failed - writing marker"
+    "applied" | Out-File (Join-Path $DstDir '_update_applied.txt') -Encoding UTF8
+}
+
+Log "done"
+Start-Sleep -Seconds 5
+Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+"""
 
 
 class ReleaseInfo(NamedTuple):
@@ -91,18 +164,11 @@ async def download_update(
 
 
 def apply_update_and_restart(zip_path: Path) -> None:
-    """ZIP を展開し BAT にファイル差し替え + 再起動を委譲する。
+    """ZIP を展開し PS1 スクリプトにファイル差し替え + 再起動を委譲する。
 
-    frozen モードでは BAT 起動後に os._exit(0) でプロセスを即座に終了する。
-    これにより EXE ファイルのロックが即座に解除され、
-    BAT が makeAiFactory.exe を確実に上書きコピーできるようになる。
-
-    【なぜ os._exit(0) が必要か】
-    signals.app_quit.emit() → app.quit() → app.exec() 返却 という流れで
-    Qt イベントループは終了するが、QRunnable ワーカースレッドはコルーチンを
-    実行し続けるため Python プロセスが 60 秒以上終了しない。
-    その間 EXE ファイルがロックされ、BAT の robocopy が失敗する。
-    os._exit(0) は全スレッドを即座に停止するため、1〜2 秒でプロセスが消える。
+    PS1 は ShellExecuteW (Explorer サービス経由) で起動するため
+    親の Job Object を継承せず、親プロセス終了後も確実に動作する。
+    os._exit(0) で即座に終了し EXE ロックを解除する。
     """
     if not getattr(sys, "frozen", False):
         logger.warning("Not frozen — skipping update apply")
@@ -126,128 +192,68 @@ def apply_update_and_restart(zip_path: Path) -> None:
     actual_src = entries[0] if (len(entries) == 1 and entries[0].is_dir()) else extract_dir
     logger.info("Update source: %s", actual_src)
 
-    # ── 2. BAT ファイル生成 ──────────────────────────────────────────────
-    log_path = exe_dir / "_update_debug.log"
-    bat_path = exe_dir / "_update.bat"
+    # ── 2. PS1 を %TEMP% に書き出す ─────────────────────────────────────
+    ps1_path = Path(tempfile.mktemp(suffix=".ps1", prefix="maf_upd_"))
+    # UTF-8 BOM: PowerShell がエンコーディングを確実に認識するため必須
+    ps1_path.write_text(_PS1_TEMPLATE, encoding="utf-8-sig")
+    logger.info("PS1 written: %s", ps1_path)
 
-    bat_lines = [
-        "@echo off",
-        f'set "LOG={log_path}"',
-        f'set "SRC={actual_src}"',
-        f'set "DST={exe_dir}"',
-        f'set "EXE={exe}"',
-        f'set "PID_VAL={pid}"',
-        "",
-        # BAT 起動確認ログ (この行が出れば BAT は実行されている)
-        'echo %DATE% %TIME% updater started > "%LOG%"',
-        'echo SRC=%SRC% >> "%LOG%"',
-        'echo DST=%DST% >> "%LOG%"',
-        'echo EXE=%EXE% >> "%LOG%"',
-        'echo PID=%PID_VAL% >> "%LOG%"',
-        "",
-        # プロセス終了待ち (os._exit で即終了するので通常 1-2 秒で抜ける)
-        "REM Wait for the old process to exit (os._exit makes this fast)",
-        "set COUNT=0",
-        ":wait_loop",
-        'tasklist /FI "PID eq %PID_VAL%" /NH 2>nul | find /I ".exe" >nul',
-        "if errorlevel 1 goto do_copy",
-        "set /A COUNT+=1",
-        "if %COUNT% GEQ 10 goto do_copy",
-        "timeout /t 1 /nobreak >nul",
-        "goto wait_loop",
-        "",
-        ":do_copy",
-        'echo %TIME% process check done (count=%COUNT%) >> "%LOG%"',
-        "",
-        # ファイルハンドル解放を確実にするため 1 秒追加待機
-        "timeout /t 1 /nobreak >nul",
-        "",
-        # ステージングディレクトリ存在確認
-        'if not exist "%SRC%" (',
-        '    echo ERROR: staging dir not found: %SRC% >> "%LOG%"',
-        "    exit /b 1",
-        ")",
-        "",
-        # robocopy でファイルコピー
-        # /E  : サブディレクトリも含む (空ディレクトリも含む)
-        # /IS : 同じファイルも上書き
-        # /IT : タイムスタンプが異なるファイルも上書き
-        # /IM : 更新されたファイルを上書き
-        # /R:3: 失敗時 3 回リトライ
-        # /W:2: リトライ間隔 2 秒 (デフォルト 30 秒を短縮)
-        'echo %TIME% starting robocopy >> "%LOG%"',
-        'robocopy "%SRC%" "%DST%" /E /IS /IT /IM /NFL /NDL /NJH /R:3 /W:2 >> "%LOG%" 2>&1',
-        "set RC=%ERRORLEVEL%",
-        'echo %TIME% robocopy exit=%RC% >> "%LOG%"',
-        "",
-        # robocopy exit code >= 8 はエラー (0-7 は成功/情報)
-        "if %RC% GEQ 8 (",
-        '    echo ERROR: robocopy failed (exit=%RC%) >> "%LOG%"',
-        "    exit /b 1",
-        ")",
-        "",
-        # 新バージョンの EXE 起動
-        # cmd.exe 組み込みの start を使う (powershell -Command 経由は廃止):
-        # 一部のAV/EDRが「非対話シェルから隠しウィンドウでpowershell -Commandを
-        # 起動する」パターンを不審な挙動として静かにブロックすることがあり、
-        # それが原因でコピーは成功するのに再起動だけ失敗する不具合が起きていた。
-        'if exist "%EXE%" (',
-        '    echo %TIME% launching %EXE% >> "%LOG%"',
-        '    start "" /D "%DST%" "%EXE%"',
-        '    echo %TIME% launch command sent >> "%LOG%"',
-        ") else (",
-        '    echo ERROR: exe not found after copy: %EXE% >> "%LOG%"',
-        "    exit /b 1",
-        ")",
-        "",
-        # クリーンアップ
-        "timeout /t 3 /nobreak >nul",
-        'rd /s /q "%SRC%" 2>nul',
-        'echo %TIME% cleanup done >> "%LOG%"',
-        'del "%~f0" 2>nul',
-    ]
-
-    bat_content = "\r\n".join(bat_lines) + "\r\n"
-    bat_path.write_bytes(bat_content.encode("ascii"))
-    logger.info("BAT written: %s", bat_path)
-
-    # ── 3. BAT を完全非表示で起動 ────────────────────────────────────────
-    si = subprocess.STARTUPINFO()
-    si.dwFlags = subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 0  # SW_HIDE
-
-    flags_primary  = subprocess.CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP | _CREATE_BREAKAWAY_FROM_JOB
-    flags_fallback = subprocess.CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
-
-    try:
-        proc = subprocess.Popen(
-            ["cmd.exe", "/c", str(bat_path)],
-            creationflags=flags_primary,
-            startupinfo=si,
-        )
-    except OSError:
-        logger.warning("CREATE_BREAKAWAY_FROM_JOB failed, retrying without it")
-        proc = subprocess.Popen(
-            ["cmd.exe", "/c", str(bat_path)],
-            creationflags=flags_fallback,
-            startupinfo=si,
-        )
-
-    logger.info(
-        "Update BAT launched (app_pid=%d bat_pid=%d): %s -> %s",
-        pid, proc.pid, actual_src, exe_dir,
+    # ── 3. ShellExecuteW で PS1 を起動 (Job Object 非継承) ──────────────
+    args = (
+        f'-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass '
+        f'-File "{ps1_path}" '
+        f'-ParentPid {pid} '
+        f'-SrcDir "{actual_src}" '
+        f'-DstDir "{exe_dir}" '
+        f'-ExePath "{exe}"'
     )
+    logger.info("Launching PS1 via ShellExecuteW")
+    ret = ctypes.windll.shell32.ShellExecuteW(
+        None, "open", "powershell.exe", args, str(exe_dir), 0
+    )
+    if ret <= 32:
+        # ShellExecute 失敗 (32 以下はエラーコード) → Popen にフォールバック
+        logger.warning("ShellExecuteW returned %d, falling back to Popen", ret)
+        si = subprocess.STARTUPINFO()
+        si.dwFlags = subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        _CREATE_NEW_PROCESS_GROUP  = 0x00000200
+        _CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+        try:
+            subprocess.Popen(
+                ["powershell.exe", "-WindowStyle", "Hidden",
+                 "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                 "-File", str(ps1_path),
+                 "-ParentPid", str(pid),
+                 "-SrcDir", str(actual_src),
+                 "-DstDir", str(exe_dir),
+                 "-ExePath", str(exe)],
+                creationflags=(subprocess.CREATE_NO_WINDOW
+                               | _CREATE_NEW_PROCESS_GROUP
+                               | _CREATE_BREAKAWAY_FROM_JOB),
+                startupinfo=si,
+            )
+        except OSError:
+            subprocess.Popen(
+                ["powershell.exe", "-WindowStyle", "Hidden",
+                 "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                 "-File", str(ps1_path),
+                 "-ParentPid", str(pid),
+                 "-SrcDir", str(actual_src),
+                 "-DstDir", str(exe_dir),
+                 "-ExePath", str(exe)],
+                creationflags=(subprocess.CREATE_NO_WINDOW
+                               | _CREATE_NEW_PROCESS_GROUP),
+                startupinfo=si,
+            )
 
-    # ── 4. プロセスを即座に終了して EXE ロックを解除 ────────────────────
-    # os._exit(0) は全スレッドを即座に停止する (Python の通常終了処理をスキップ)。
-    # これにより:
-    #   - makeAiFactory.exe のファイルロックが即座に解除される
-    #   - BAT が 1-2 秒後に "process gone" を検出して robocopy を開始できる
-    #   - robocopy が EXE を確実にコピーできる (Error 32 が発生しない)
-    #
-    # signals.app_quit.emit() は使わない:
-    #   app.quit() → app.exec() 返却後も QRunnable ワーカースレッドが
-    #   _run_setup() を続行するため、プロセスが 60 秒以上終了しない。
-    logger.info("Calling os._exit(0) to release EXE lock for updater BAT")
-    logging.shutdown()  # ログをフラッシュしてからプロセス終了
+    # ── 4. ダウンロード ZIP を削除 ───────────────────────────────────────
+    try:
+        zip_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    # ── 5. プロセスを即座に終了して EXE ロックを解除 ────────────────────
+    logger.info("Calling os._exit(0) to release EXE lock for PS1 updater")
+    logging.shutdown()
     os._exit(0)

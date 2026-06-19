@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import sys
 import threading
@@ -14,8 +15,9 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from .gui.icon_data import app_icon
 
-from .constants import APP_NAME, SUPPORTED_IMAGE_EXTENSIONS
+from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENSIONS
 from .core.app_controller import AppController
+from .core.bot_state import write_bot_state
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
 from .core.paths import AppPaths, _exe_dir
@@ -41,12 +43,22 @@ def _job_overall_pct(p: JobProgress) -> float:
 
 
 def _task_pct(p: JobProgress) -> float:
-    """現在のステップバーに表示する進捗。生成中以外は不定 (-1)。"""
-    return p.percent if p.state == JobState.GENERATING else -1.0
+    """現在のステップバーに表示する進捗。生成中以外・KSampler未開始は不定 (-1)。"""
+    if p.state != JobState.GENERATING:
+        return -1.0
+    if p.total_steps <= 0:
+        return -1.0
+    return p.percent
+from .core.discord_bot_controller import DiscordBotController
 from .gui.batch_dialog import BatchDialog
+from .gui.dev_mode_dialog import DevModeDialog
+from .gui.discord_settings_dialog import DiscordSettingsDialog
 from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
 from .gui.main_window import MainWindow
+from .gui.remote_room_dialog import RemoteRoomDialog, make_qr_pixmap
+from .remote_room.controller import RemoteRoomController
+from .remote_room.room_config import RemoteRoomConfig
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +74,13 @@ class _AsyncSignals(QObject):
     batch_done          = Signal(int, int, float)     # completed, total, elapsed_sec
     error               = Signal(str, str, str, bool)
     app_quit            = Signal()
+
+
+class _UpdateCheckSignals(QObject):
+    checked      = Signal(object)  # ReleaseInfo | None
+    failed       = Signal(str)
+    progress     = Signal(float)
+    apply_skipped = Signal()       # devモード (非frozen) のため適用をスキップした。frozenではプロセスが終了するため到達しない
 
 
 class _Worker(QRunnable):
@@ -223,10 +242,93 @@ def run_app() -> int:
     window.set_always_on_top_callback(_on_always_on_top_toggle)
     window.set_always_on_top(settings.always_on_top)
 
+    def _on_check_update_requested(dlg) -> None:
+        from .core.updater import check_for_update
+        dlg.show_checking()
+        upd_signals = _UpdateCheckSignals()
+
+        def _on_checked(release) -> None:
+            if release is None:
+                dlg.show_up_to_date()
+            else:
+                dlg.show_update_available(release.version)
+
+        def _on_failed(message: str) -> None:
+            dlg.show_check_failed(message)
+
+        upd_signals.checked.connect(_on_checked, Qt.ConnectionType.QueuedConnection)
+        upd_signals.failed.connect(_on_failed,   Qt.ConnectionType.QueuedConnection)
+
+        async def _do_check() -> None:
+            try:
+                release = await asyncio.wait_for(check_for_update(), timeout=15.0)
+                upd_signals.checked.emit(release)
+            except asyncio.TimeoutError:
+                upd_signals.failed.emit("タイムアウトしました")
+            except Exception as e:
+                upd_signals.failed.emit(str(e))
+
+        pool = QThreadPool.globalInstance()
+        pool.start(_Worker(_do_check(), upd_signals))
+
+    def _on_update_now_requested(dlg) -> None:
+        from .core.updater import apply_update_and_restart, check_for_update, download_update
+        upd_signals = _UpdateCheckSignals()
+
+        def _on_progress(pct: float) -> None:
+            dlg.show_downloading(pct * 100)
+
+        def _on_failed(message: str) -> None:
+            dlg.show_check_failed(message)
+
+        def _on_apply_skipped() -> None:
+            dlg.show_apply_skipped_dev_mode()
+            QMessageBox.information(
+                window, "アップデート",
+                "開発モードで実行中のため、アップデートの適用はスキップされました。",
+            )
+
+        upd_signals.progress.connect(_on_progress,      Qt.ConnectionType.QueuedConnection)
+        upd_signals.failed.connect(_on_failed,           Qt.ConnectionType.QueuedConnection)
+        upd_signals.apply_skipped.connect(_on_apply_skipped, Qt.ConnectionType.QueuedConnection)
+
+        async def _do_update() -> None:
+            try:
+                release = await asyncio.wait_for(check_for_update(), timeout=15.0)
+                if release is None:
+                    upd_signals.failed.emit("最新バージョンが見つかりませんでした")
+                    return
+
+                def _cb(pct: float) -> None:
+                    upd_signals.progress.emit(pct)
+                zip_path = await download_update(release, progress_cb=_cb)
+                apply_update_and_restart(zip_path)
+                # frozen モードでは os._exit(0) が呼ばれここには到達しない。
+                # 到達した場合は dev モードでスキップされたことを意味する。
+                upd_signals.apply_skipped.emit()
+            except asyncio.TimeoutError:
+                upd_signals.failed.emit("タイムアウトしました")
+            except Exception as e:
+                upd_signals.failed.emit(str(e))
+
+        pool = QThreadPool.globalInstance()
+        pool.start(_Worker(_do_update(), upd_signals))
+
+    window.set_check_update_callback(_on_check_update_requested)
+    window.set_update_now_callback(_on_update_now_requested)
+
     signals = _AsyncSignals()
+
+    # Discord Bot コントローラ（起動後に設定）
+    _discord: dict = {"ctrl": None, "generating": False, "batch_running": False, "batch_all_pct": 0.0}
+
+    # Remote Room コントローラ
+    _remote_room: dict = {"ctrl": None, "dlg": None, "generating": False}
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
+    # 「現在の生成で終了」フラグ — キャンセルと区別するためだけに使う
+    _batch_finish_after_current = threading.Event()
     # 単体生成キャンセル用フラグ（スレッドセーフ）
     _single_cancel = threading.Event()
 
@@ -252,6 +354,11 @@ def run_app() -> int:
         window.update_preset_menu(installed_presets, model_preset)
         window.set_sage_attention_available(sage_attention_available)
         window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
+        write_bot_state(paths.runtime_root, "idle", ctrl.comfy_port)
+        if os.environ.get("MAF_UPDATE_APPLIED"):
+            window.update_status(f"✓ v{APP_VERSION} にアップデートされました")
+        if settings.discord_bot_enabled and settings.discord_token:
+            _start_discord_bot()
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
@@ -264,11 +371,13 @@ def run_app() -> int:
 
     @Slot(Path, str, float, float, float)
     def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
+        write_bot_state(paths.runtime_root, "idle")
         window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
         _play_complete_se()
 
     @Slot()
     def _on_job_cancelled() -> None:
+        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -276,6 +385,7 @@ def run_app() -> int:
 
     @Slot(str, float, float, float, str)
     def _on_batch_progress(message: str, all_pct: float, image_pct: float, task_pct: float, detail: str) -> None:
+        _discord["batch_all_pct"] = all_pct
         window.update_batch_progress(message, all_pct, image_pct, task_pct, detail)
 
     @Slot(Path)
@@ -284,15 +394,24 @@ def run_app() -> int:
 
     @Slot(int, int, float)
     def _on_batch_done(completed: int, total: int, elapsed_sec: float) -> None:
+        _discord["batch_running"] = False
+        if _discord["ctrl"]:
+            _discord["ctrl"].set_batch_mode(False)
+        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
+        window.hide_finish_current_btn()
         mins = int(elapsed_sec // 60)
         secs = int(elapsed_sec % 60)
         time_str = f"{mins}分{secs}秒" if mins > 0 else f"{secs}秒"
         cancelled = _batch_cancel.is_set()
-        if cancelled:
+        finish_after = _batch_finish_after_current.is_set()
+        if cancelled and not finish_after:
             title = "バッチ処理を中断しました"
             msg = f"{completed}/{total}枚 を処理して中断しました\n経過時間: {time_str}"
+        elif cancelled and finish_after:
+            title = "バッチ処理を停止しました"
+            msg = f"{completed}/{total}枚 を処理して停止しました\n経過時間: {time_str}"
         else:
             title = "バッチ処理が完了しました"
             msg = f"{completed}枚 の動画を生成しました\n経過時間: {time_str}"
@@ -302,10 +421,281 @@ def run_app() -> int:
 
     @Slot(str, str, str, bool)
     def _on_error(title: str, msg: str, detail: str, show_repair: bool) -> None:
+        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
         window.show_error(title, msg, detail, show_repair)
+
+    # ── Discord Bot ───────────────────────────────────────────────────────
+
+    def _start_discord_bot() -> None:
+        logger.info("_start_discord_bot 開始 (既存ctrl=%s)", _discord["ctrl"] is not None)
+        if _discord["ctrl"]:
+            _discord["ctrl"].stop()
+        bot = DiscordBotController(settings, paths)
+        _discord["ctrl"] = bot
+        sig = bot.signals
+        sig.job_started.connect(_on_discord_job_started,   Qt.ConnectionType.QueuedConnection)
+        sig.job_progress.connect(_on_discord_job_progress, Qt.ConnectionType.QueuedConnection)
+        sig.job_done.connect(_on_discord_job_done,         Qt.ConnectionType.QueuedConnection)
+        sig.job_cancelled.connect(_on_discord_job_cancelled, Qt.ConnectionType.QueuedConnection)
+        sig.job_error.connect(_on_discord_job_error,       Qt.ConnectionType.QueuedConnection)
+        sig.status_changed.connect(window.update_discord_status, Qt.ConnectionType.QueuedConnection)
+        bot.start()
+
+    @Slot(str, str)
+    def _on_discord_job_started(image_path: str, username: str) -> None:
+        _discord["generating"] = True
+        write_bot_state(paths.runtime_root, "single")
+
+        if _discord["batch_running"]:
+            window.set_current_image(Path(image_path))
+            window.update_batch_progress(
+                f"⚡ Discord 割り込み生成中: @{username}",
+                _discord["batch_all_pct"], 0.0, -1.0, "Discord からの依頼を処理中",
+            )
+            logger.info("Discord 割り込みジョブ開始: @%s %s", username, image_path)
+            return
+
+        window.enter_single_mode(Path(image_path))
+        window.update_single_progress(f"Discord: @{username}", 0.0, -1.0)
+
+        def _do_discord_cancel() -> None:
+            if _discord["ctrl"]:
+                _discord["ctrl"].cancel_current_job()
+            window.update_status("Discord 生成をキャンセル中...")
+
+        window.show_cancel_btn(_do_discord_cancel)
+        logger.info("Discord ジョブ開始: @%s %s", username, image_path)
+
+    @Slot(float, str)
+    def _on_discord_job_progress(pct: float, msg: str) -> None:
+        if not _discord["generating"]:
+            return
+        if _discord["batch_running"]:
+            window.update_batch_progress(
+                f"⚡ Discord 割り込み生成中 — {msg}",
+                _discord["batch_all_pct"], pct, pct, "Discord からの依頼を処理中",
+            )
+        else:
+            window.update_single_progress(msg, pct, pct)
+
+    @Slot(str)
+    def _on_discord_job_done(output_path: str) -> None:
+        _discord["generating"] = False
+        if _discord["batch_running"]:
+            write_bot_state(paths.runtime_root, "batch")
+            window.update_batch_progress(
+                "⚡ Discord 割り込み完了 — バッチ再開中...",
+                _discord["batch_all_pct"], 100.0, -1.0, "",
+            )
+            logger.info("Discord 割り込みジョブ完了: %s", output_path)
+            return
+        write_bot_state(paths.runtime_root, "idle")
+        window.show_result(Path(output_path))
+        _play_complete_se()
+        logger.info("Discord ジョブ完了: %s", output_path)
+
+    @Slot()
+    def _on_discord_job_cancelled() -> None:
+        _discord["generating"] = False
+        if _discord["batch_running"]:
+            write_bot_state(paths.runtime_root, "batch")
+            return
+        write_bot_state(paths.runtime_root, "idle")
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        window.update_status("Discord からの生成をキャンセルしました")
+
+    @Slot(str)
+    def _on_discord_job_error(msg: str) -> None:
+        _discord["generating"] = False
+        if _discord["batch_running"]:
+            write_bot_state(paths.runtime_root, "batch")
+            logger.error("Discord 割り込みジョブエラー: %s", msg)
+            return
+        write_bot_state(paths.runtime_root, "idle")
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        window.update_status(f"Discord 生成エラー: {msg}")
+        logger.error("Discord ジョブエラー: %s", msg)
+
+    @Slot()
+    def _on_discord_settings_requested() -> None:
+        dlg = DiscordSettingsDialog(settings, window)
+        if _discord["ctrl"]:
+            _discord["ctrl"].signals.status_changed.connect(
+                dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
+            )
+
+        def _handle_save(enabled: bool, token: str, channel_ids: list, interrupt: bool = False) -> None:
+            logger.info("Discord 設定保存: enabled=%s, has_token=%s, interrupt=%s", enabled, bool(token), interrupt)
+            try:
+                settings.set_discord_bot_enabled(enabled)
+                settings.set_discord_token(token)
+                settings.set_discord_channel_ids(list(channel_ids))
+                settings.set_discord_bot_interrupt(interrupt)
+                if enabled and token:
+                    _start_discord_bot()
+                    if _discord["ctrl"]:
+                        _discord["ctrl"].signals.status_changed.connect(
+                            dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
+                        )
+                    dlg.update_bot_status("接続中...")
+                    window.update_discord_status("接続中...")
+                else:
+                    if _discord["ctrl"]:
+                        _discord["ctrl"].stop()
+                        _discord["ctrl"] = None
+                    window.update_discord_status("停止")
+                    dlg.update_bot_status("停止")
+            except Exception as e:
+                logger.exception("Discord 設定保存中にエラー")
+                dlg.update_bot_status(f"エラー: {e}")
+
+        dlg.set_save_callback(_handle_save)
+        dlg.exec()
+
+    # ── Remote Room ───────────────────────────────────────────────────────
+
+    @Slot(str, str)
+    def _on_remote_url_ready(url: str, pin: str) -> None:
+        """URL 公開時にメインウィンドウの drop ページへ QR を表示する。"""
+        qr_url = f"{url}?pin={pin}" if pin else url
+        hint = "📱 スキャンで入室 (PIN自動入力)" if pin else "📱 スキャンして入室"
+        pixmap = make_qr_pixmap(qr_url, 160)
+        if pixmap:
+            window.show_remote_room_qr(pixmap, hint)
+
+    @Slot(str, str)
+    def _on_remote_status_for_qr(status_code: str, _message: str) -> None:
+        """投入口が停止したときメインウィンドウの QR を消す。"""
+        if status_code in ("stopped", "error"):
+            window.clear_remote_room_qr()
+
+    @Slot()
+    def _on_remote_room_requested() -> None:
+        dlg = _remote_room.get("dlg")
+        if dlg is None or not dlg.isVisible():
+            dlg = RemoteRoomDialog(window)
+            _remote_room["dlg"] = dlg
+
+            def _handle_start(config_dict: dict) -> None:
+                ctrl = _remote_room.get("ctrl")
+                if ctrl and ctrl.is_running:
+                    return
+                cfg = RemoteRoomConfig.from_dict(config_dict)
+                ctrl = RemoteRoomController(settings, paths)
+                _remote_room["ctrl"] = ctrl
+                sig = ctrl.signals
+                sig.status_changed.connect(dlg.update_status,          Qt.ConnectionType.QueuedConnection)
+                sig.status_changed.connect(_on_remote_status_for_qr,   Qt.ConnectionType.QueuedConnection)
+                sig.public_url_ready.connect(dlg.set_public_url,       Qt.ConnectionType.QueuedConnection)
+                sig.public_url_ready.connect(_on_remote_url_ready,     Qt.ConnectionType.QueuedConnection)
+                sig.stats_changed.connect(dlg.update_stats,            Qt.ConnectionType.QueuedConnection)
+                sig.error.connect(dlg.show_error_msg,                  Qt.ConnectionType.QueuedConnection)
+                sig.job_started.connect(_on_remote_job_started,        Qt.ConnectionType.QueuedConnection)
+                sig.job_progress.connect(_on_remote_job_progress,      Qt.ConnectionType.QueuedConnection)
+                sig.job_done.connect(_on_remote_job_done,              Qt.ConnectionType.QueuedConnection)
+                sig.job_error.connect(_on_remote_job_error,            Qt.ConnectionType.QueuedConnection)
+                settings.set_remote_room_config(config_dict)
+                ctrl.start(cfg)
+                dlg.update_status("starting", "起動中...")
+
+            def _handle_stop() -> None:
+                ctrl = _remote_room.get("ctrl")
+                if ctrl:
+                    ctrl.stop()
+                    _remote_room["ctrl"] = None
+
+            dlg.set_start_callback(_handle_start)
+            dlg.set_stop_callback(_handle_stop)
+            dlg.stop_accepting.connect(lambda: _remote_room["ctrl"].stop_accepting() if _remote_room["ctrl"] else None)
+            dlg.cancel_job.connect(lambda: _remote_room["ctrl"].cancel_current_job() if _remote_room["ctrl"] else None)
+            dlg.clear_queue.connect(lambda: _remote_room["ctrl"].clear_queue() if _remote_room["ctrl"] else None)
+
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    @Slot(str, str)
+    def _on_remote_job_started(job_id: str, image_path: str) -> None:
+        _remote_room["generating"] = True
+        write_bot_state(paths.runtime_root, "single")
+        window.enter_single_mode(Path(image_path))
+        window.update_single_progress(f"🌐 投入口 生成中: #{job_id[:6]}", 0.0, -1.0)
+
+        def _do_remote_cancel() -> None:
+            ctrl = _remote_room.get("ctrl")
+            if ctrl:
+                ctrl.cancel_current_job()
+            window.update_status("🌐 投入口 生成をキャンセル中...")
+
+        window.show_cancel_btn(_do_remote_cancel)
+        logger.info("Remote Room ジョブ開始: %s", job_id)
+
+    @Slot(str, float, str)
+    def _on_remote_job_progress(job_id: str, pct: float, label: str) -> None:
+        if _remote_room["generating"]:
+            window.update_single_progress(label, pct, pct)
+
+    @Slot(str, str)
+    def _on_remote_job_done(job_id: str, output_path: str) -> None:
+        _remote_room["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.show_result(Path(output_path))
+        _play_complete_se()
+        logger.info("Remote Room ジョブ完了: %s → %s", job_id, output_path)
+
+    @Slot(str, str)
+    def _on_remote_job_error(job_id: str, msg: str) -> None:
+        _remote_room["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        window.update_status(f"🌐 投入口 生成エラー: {msg}")
+        logger.error("Remote Room ジョブエラー: %s — %s", job_id, msg)
+
+    @Slot()
+    def _on_dev_mode_requested() -> None:
+        async def _run_job_fn(image_path: Path, overrides, on_progress):
+            job_ctrl = ctrl.get_job_controller()
+            return await job_ctrl.run_job(image_path, on_progress=on_progress, dev_overrides=overrides)
+
+        template_defaults = None
+        try:
+            import json
+            from .comfy.workflow_patcher import extract_dev_defaults
+            with paths.runtime_template_json().open("r", encoding="utf-8") as f:
+                raw_template = json.load(f)
+            template_defaults = extract_dev_defaults(raw_template)
+        except Exception as e:
+            logger.warning("開発モードのテンプレート初期値読み込み失敗: %s", e)
+
+        dlg = DevModeDialog(
+            run_job_fn=_run_job_fn,
+            save_params_fn=settings.set_dev_mode_params,
+            load_params=settings.dev_mode_params,
+            template_defaults=template_defaults,
+            parent=window,
+        )
+        dlg.show()
+
+        async def _fetch_lora_choices() -> list[str]:
+            from .comfy.api_client import ComfyApiClient
+            client = ComfyApiClient(f"http://{COMFY_HOST}:{ctrl.comfy_port}")
+            info = await client.get_object_info()
+            node_info = info.get("LoraLoaderModelOnly", {})
+            spec = node_info.get("input", {}).get("required", {}).get("lora_name")
+            if spec and isinstance(spec[0], list):
+                return sorted(spec[0])
+            return []
+
+        dlg.fetch_lora_choices(_fetch_lora_choices)
 
     signals.setup_progress.connect(_on_setup_progress,          Qt.ConnectionType.QueuedConnection)
     signals.setup_ready.connect(_on_setup_ready,                Qt.ConnectionType.QueuedConnection)
@@ -448,7 +838,27 @@ def run_app() -> int:
                 shutil.copy2(str(output), str(output_folder / f"{image_path.stem}.mp4"))
                 completed += 1
             except Exception as e:
-                logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
+                if _batch_cancel.is_set():
+                    logger.info("バッチ生成中断 (%s)", image_path.name)
+                else:
+                    logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
+
+            # Discord 割り込み生成: 1件終了後、割り込みキューが空になるまで待機
+            disc_ctrl = _discord["ctrl"]
+            if settings.discord_bot_interrupt and disc_ctrl and disc_ctrl.interrupt_active.is_set():
+                logger.info("Discord 割り込み待機 (バッチ %d/%d 完了後)", i + 1, total)
+                all_pct_so_far = (i + 1) / total * 100
+                signals.batch_progress.emit(
+                    f"フォルダ生成 ({i + 1}/{total}) — ⚡ Discord 割り込み生成中...",
+                    all_pct_so_far, 100.0, -1.0, "Discord からのリクエストを優先処理中",
+                )
+                while disc_ctrl.interrupt_active.is_set():
+                    # 「次の動画で終了」はソフトキャンセルなので割り込み完了まで待つ。
+                    # ハードキャンセル（中断ボタン）のみ即時脱出する。
+                    if _batch_cancel.is_set() and not _batch_finish_after_current.is_set():
+                        break
+                    await asyncio.sleep(0.5)
+                logger.info("Discord 割り込み完了 → バッチ再開")
 
         elapsed = time.monotonic() - start
         signals.batch_done.emit(completed, total, elapsed)
@@ -466,6 +876,7 @@ def run_app() -> int:
 
     @Slot(Path)
     def _on_image_dropped(path: Path) -> None:
+        write_bot_state(paths.runtime_root, "single")
         window.enter_single_mode(path)
         window.update_single_progress("生成を準備しています...", 0.0, -1.0)
 
@@ -484,29 +895,58 @@ def run_app() -> int:
 
     @Slot()
     def _on_batch_requested() -> None:
-        dlg = BatchDialog(parent=window)
+        dlg = BatchDialog(
+            parent=window,
+            default_input=settings.batch_input_folder,
+            default_output=settings.batch_output_folder,
+        )
         if dlg.exec() != BatchDialog.DialogCode.Accepted:
             return
         input_folder = dlg.input_folder()
         output_folder = dlg.output_folder()
+        settings.set_batch_input_folder(str(input_folder))
+        settings.set_batch_output_folder(str(output_folder))
 
+        write_bot_state(paths.runtime_root, "batch")
         _batch_cancel.clear()
+        _batch_finish_after_current.clear()
+        _discord["batch_running"] = True
+        if _discord["ctrl"] and settings.discord_bot_interrupt:
+            _discord["ctrl"].set_batch_mode(True)
 
         def _do_cancel() -> None:
             _batch_cancel.set()
             window.update_status("中断中...")
+            window.hide_finish_current_btn()
             pool = QThreadPool.globalInstance()
             pool.start(_Worker(_cancel_current_job(), signals))
+
+        def _do_finish_after_current() -> None:
+            if _batch_finish_after_current.is_set():
+                # 既に予約済み → 生成完了前ならここで取り消せる
+                _batch_finish_after_current.clear()
+                _batch_cancel.clear()
+                window.update_status("フォルダ生成を続行します")
+                window.set_finish_current_btn_text("現在の生成で終了")
+            else:
+                _batch_cancel.set()
+                _batch_finish_after_current.set()
+                window.update_status("現在の生成が完了したら停止します...")
+                window.set_finish_current_btn_text("終了予約を取り消す")
 
         window.enter_batch_mode()
         window.update_batch_progress("フォルダ生成を開始しています...", 0.0, 0.0, -1.0)
         window.show_cancel_btn(_do_cancel)
+        window.show_finish_current_btn(_do_finish_after_current)
 
         pool = QThreadPool.globalInstance()
         pool.start(_Worker(_run_batch(input_folder, output_folder), signals))
 
-    window.image_dropped.connect(_on_image_dropped, Qt.ConnectionType.QueuedConnection)
-    window.batch_requested.connect(_on_batch_requested, Qt.ConnectionType.QueuedConnection)
+    window.image_dropped.connect(_on_image_dropped,              Qt.ConnectionType.QueuedConnection)
+    window.batch_requested.connect(_on_batch_requested,          Qt.ConnectionType.QueuedConnection)
+    window.discord_settings_requested.connect(_on_discord_settings_requested, Qt.ConnectionType.QueuedConnection)
+    window.dev_mode_requested.connect(_on_dev_mode_requested,    Qt.ConnectionType.QueuedConnection)
+    window.remote_room_requested.connect(_on_remote_room_requested, Qt.ConnectionType.QueuedConnection)
 
     window.show_progress_indeterminate("セットアップを確認しています...")
     window.show()
@@ -516,6 +956,10 @@ def run_app() -> int:
 
     result = app.exec()
     ctrl.stop_server()
+    if _discord["ctrl"]:
+        _discord["ctrl"].stop()
+    if _remote_room["ctrl"]:
+        _remote_room["ctrl"].stop()
     return result
 
 

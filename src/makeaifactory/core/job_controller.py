@@ -11,13 +11,19 @@ from typing import TYPE_CHECKING, Callable
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.output_resolver import resolve_output_mp4
-from ..comfy.progress_tracker import ProgressTracker, build_node_labels
-from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
+from ..comfy.progress_tracker import ProgressTracker, build_node_labels, count_progress_stages
+from ..comfy.workflow_patcher import (
+    DevModeOverrides,
+    WorkflowPatchContext,
+    apply_dev_overrides,
+    make_output_prefix,
+    patch_workflow,
+)
 from ..comfy.server_controller import ComfyServerController
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..core.vram_monitor import RamMonitor, VramMonitor
-from ..domain.errors import OutputNotFoundError
+from ..domain.errors import MakeAiFactoryError, OutputNotFoundError
 from ..domain.job import Job
 from ..domain.progress import BenchmarkResult, JobProgress, JobState
 
@@ -56,6 +62,7 @@ class JobController:
         self,
         input_image: Path,
         on_progress: ProgressCallback | None = None,
+        dev_overrides: DevModeOverrides | None = None,
     ) -> tuple[Path, BenchmarkResult]:
         job = Job()
         self._current_job = job
@@ -89,7 +96,11 @@ class JobController:
         job.uploaded_image_name = uploaded_name
 
         # workflow patch
-        seed = random.randint(0, 2**32 - 1) if self._settings.seed_randomize else None
+        if dev_overrides is not None:
+            # dev mode: シードはオーバーライドが持つ (None なら template のまま)
+            seed = dev_overrides.seed
+        else:
+            seed = random.randint(0, 2**32 - 1) if self._settings.seed_randomize else None
         from ..constants import MODEL_PRESETS
         preset_def = MODEL_PRESETS.get(self._settings.model_preset, MODEL_PRESETS["normal"])
         ctx = WorkflowPatchContext(
@@ -106,6 +117,8 @@ class JobController:
             ),
         )
         patched = patch_workflow(self._template, ctx)
+        if dev_overrides is not None:
+            patched = apply_dev_overrides(patched, dev_overrides)
         job.seed = seed
 
         # workflow を保存
@@ -123,14 +136,19 @@ class JobController:
             tracker = ProgressTracker(
                 on_progress=on_progress,
                 node_labels=build_node_labels(self._template),
+                stage_count=count_progress_stages(self._template),
             )
             async for event in client.watch_progress(prompt_id):
                 tracker.handle_event(event)
                 if event.event_type == "execution_error":
                     break
 
+        if job.status == JobState.CANCELLED:
+            raise MakeAiFactoryError("生成がキャンセルされました")
+
         # history 取得
         job.status = JobState.RESOLVING_OUTPUT
+        _notify(on_progress, JobProgress(state=JobState.RESOLVING_OUTPUT, message="動画を取得しています..."))
         history = await client.get_history(prompt_id)
         with (job_dir / "history.json").open("w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
