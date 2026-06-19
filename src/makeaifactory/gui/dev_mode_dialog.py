@@ -379,14 +379,14 @@ class DevModeDialog(QDialog):
 
     def _build_workflow_json_link(self, lay: QVBoxLayout) -> None:
         desc = QLabel(
-            "画像をドロップして動画化するとき、裏側では実際にこのComfyUIワークフロー (API形式) が"
-            "使われています。下のボタンから内容をそのまま確認・編集できます。"
+            "画像をドロップして動画化するとき、裏側では実際にこのComfyUIワークフローが"
+            "使われています。下のボタンからノードごとの値をつまみ・入力欄で直接調整できます。"
         )
         desc.setWordWrap(True)
         desc.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
         lay.addWidget(desc)
 
-        btn = QPushButton("📄  ワークフローJSON を表示・編集 (makeAiFactory_api_source.json)")
+        btn = QPushButton("🎛  ワークフローの全パラメーターを調整 (makeAiFactory_api_source.json)")
         btn.setStyleSheet(self._btn_css("#0d3050", _ACCENT, font_size=12))
         btn.clicked.connect(self._on_open_workflow_json)
         btn.setEnabled(bool(self._workflow_json_text and self._apply_workflow_json_fn))
