@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
 
 _TERMS_TEXT = """makeAiFactory 利用規約
 
@@ -36,34 +37,35 @@ _TERMS_TEXT = """makeAiFactory 利用規約
 class FirstRunDialog(QDialog):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("makeAiFactory - はじめに")
+        self.setWindowTitle(tr("makeAiFactory - はじめに"))
         self.setMinimumWidth(520)
         self.setMinimumHeight(480)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        title = QLabel("makeAiFactory へようこそ")
+        title = QLabel(tr("makeAiFactory へようこそ"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: #4fc3f7;")
         layout.addWidget(title)
 
         terms_box = QTextEdit()
+        # 法的文書のため機械翻訳はせず原文(日本語)のまま表示する
         terms_box.setPlainText(_TERMS_TEXT)
         terms_box.setReadOnly(True)
         terms_box.setStyleSheet("background: #111; color: #ccc; font-size: 12px;")
         layout.addWidget(terms_box)
 
-        self._agree_check = QCheckBox("上記の規約に同意します（必須）")
+        self._agree_check = QCheckBox(tr("上記の規約に同意します（必須）"))
         self._agree_check.setStyleSheet("color: #eee; font-size: 13px;")
         self._agree_check.stateChanged.connect(self._on_check_changed)
         layout.addWidget(self._agree_check)
 
         self._btn_box = QDialogButtonBox()
-        self._ok_btn = self._btn_box.addButton("同意してはじめる", QDialogButtonBox.ButtonRole.AcceptRole)
+        self._ok_btn = self._btn_box.addButton(tr("同意してはじめる"), QDialogButtonBox.ButtonRole.AcceptRole)
         self._ok_btn.setEnabled(False)
         self._ok_btn.setStyleSheet("padding: 10px 24px; background: #1565c0; color: white; border: none; border-radius: 4px;")
-        cancel_btn = self._btn_box.addButton("キャンセル", QDialogButtonBox.ButtonRole.RejectRole)
+        cancel_btn = self._btn_box.addButton(tr("キャンセル"), QDialogButtonBox.ButtonRole.RejectRole)
         cancel_btn.setStyleSheet("padding: 10px 24px;")
         self._btn_box.accepted.connect(self.accept)
         self._btn_box.rejected.connect(self.reject)

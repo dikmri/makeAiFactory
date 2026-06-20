@@ -26,17 +26,18 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.settings_store import SettingsStore
+from ..i18n import tr
 
 _DISCORD_API = "https://discord.com/api/v10/users/@me"
 
 
 class DiscordSettingsDialog(QDialog):
-    # テストスレッドから main thread への結果通知
-    _test_result = Signal(str)
+    # テストスレッドから main thread への結果通知 (status_code, status_text)
+    _test_result = Signal(str, str)
 
     def __init__(self, settings: SettingsStore, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Discord Bot 設定")
+        self.setWindowTitle(tr("Discord Bot 設定"))
         self.setMinimumWidth(500)
         self.setModal(True)
         self._settings = settings
@@ -57,41 +58,41 @@ class DiscordSettingsDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
 
         # ── 有効/無効チェックボックス ─────────────────────────────────
-        self._enabled_cb = QCheckBox("Discord Bot を有効にする")
+        self._enabled_cb = QCheckBox(tr("Discord Bot を有効にする"))
         self._enabled_cb.setStyleSheet("font-size: 14px;")
         layout.addWidget(self._enabled_cb)
 
         layout.addSpacing(4)
 
         # ── トークン入力 ─────────────────────────────────────────────
-        layout.addWidget(self._make_label("Bot トークン:"))
+        layout.addWidget(self._make_label(tr("Bot トークン:")))
         token_row = QHBoxLayout()
         self._token_edit = QLineEdit()
         self._token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._token_edit.setPlaceholderText("Discord Bot のトークンを貼り付けてください")
+        self._token_edit.setPlaceholderText(tr("Discord Bot のトークンを貼り付けてください"))
         self._token_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         token_row.addWidget(self._token_edit)
 
-        self._show_token_btn = QPushButton("表示")
+        self._show_token_btn = QPushButton(tr("表示"))
         self._show_token_btn.setCheckable(True)
         self._show_token_btn.setFixedWidth(56)
         self._show_token_btn.toggled.connect(self._on_show_token_toggled)
         token_row.addWidget(self._show_token_btn)
         layout.addLayout(token_row)
 
-        hint_token = QLabel("ℹ  Discord Developer Portal → アプリ → Bot → Token でコピー")
+        hint_token = QLabel(tr("ℹ  Discord Developer Portal → アプリ → Bot → Token でコピー"))
         hint_token.setStyleSheet("color: #666; font-size: 11px;")
         layout.addWidget(hint_token)
 
         layout.addSpacing(4)
 
         # ── チャンネルID 入力 ─────────────────────────────────────────
-        layout.addWidget(self._make_label("監視チャンネルID（カンマ区切り、空欄 = 全チャンネル）:"))
+        layout.addWidget(self._make_label(tr("監視チャンネルID（カンマ区切り、空欄 = 全チャンネル）:")))
         self._channels_edit = QLineEdit()
-        self._channels_edit.setPlaceholderText("例: 1234567890, 9876543210")
+        self._channels_edit.setPlaceholderText(tr("例: 1234567890, 9876543210"))
         layout.addWidget(self._channels_edit)
 
-        hint_ch = QLabel("ℹ  Discord 設定→詳細設定→開発者モードを有効化し、チャンネルを右クリック→IDをコピー")
+        hint_ch = QLabel(tr("ℹ  Discord 設定→詳細設定→開発者モードを有効化し、チャンネルを右クリック→IDをコピー"))
         hint_ch.setStyleSheet("color: #666; font-size: 11px;")
         hint_ch.setWordWrap(True)
         layout.addWidget(hint_ch)
@@ -99,11 +100,11 @@ class DiscordSettingsDialog(QDialog):
         layout.addSpacing(8)
 
         # ── 割り込み生成 ──────────────────────────────────────────────
-        self._interrupt_cb = QCheckBox("フォルダ生成中に Discord 割り込みを許可する（友人の依頼を優先）")
+        self._interrupt_cb = QCheckBox(tr("フォルダ生成中に Discord 割り込みを許可する（友人の依頼を優先）"))
         self._interrupt_cb.setStyleSheet("font-size: 13px;")
         layout.addWidget(self._interrupt_cb)
 
-        hint_intr = QLabel("ℹ  ON にすると、フォルダ生成中でも Discord からの画像を現在の動画完了後すぐに処理します")
+        hint_intr = QLabel(tr("ℹ  ON にすると、フォルダ生成中でも Discord からの画像を現在の動画完了後すぐに処理します"))
         hint_intr.setStyleSheet("color: #666; font-size: 11px;")
         hint_intr.setWordWrap(True)
         layout.addWidget(hint_intr)
@@ -112,8 +113,8 @@ class DiscordSettingsDialog(QDialog):
 
         # ── Bot 状態表示 ──────────────────────────────────────────────
         status_row = QHBoxLayout()
-        status_row.addWidget(self._make_label("Bot 状態:"))
-        self._status_lbl = QLabel("未確認")
+        status_row.addWidget(self._make_label(tr("Bot 状態:")))
+        self._status_lbl = QLabel(tr("未確認"))
         self._status_lbl.setStyleSheet("color: #aaa; font-size: 12px;")
         self._status_lbl.setWordWrap(True)
         status_row.addWidget(self._status_lbl, stretch=1)
@@ -125,7 +126,7 @@ class DiscordSettingsDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self._test_btn = QPushButton("接続テスト")
+        self._test_btn = QPushButton(tr("接続テスト"))
         self._test_btn.setStyleSheet("""
             QPushButton {
                 background: #0a2a1a; color: #66bb6a;
@@ -137,7 +138,7 @@ class DiscordSettingsDialog(QDialog):
         """)
         self._test_btn.clicked.connect(self._on_test_clicked)
 
-        self._save_btn = QPushButton("保存して適用")
+        self._save_btn = QPushButton(tr("保存して適用"))
         self._save_btn.setDefault(True)
         self._save_btn.setStyleSheet("""
             QPushButton {
@@ -149,7 +150,7 @@ class DiscordSettingsDialog(QDialog):
         """)
         self._save_btn.clicked.connect(self._on_save)
 
-        close_btn = QPushButton("閉じる")
+        close_btn = QPushButton(tr("閉じる"))
         close_btn.setStyleSheet("""
             QPushButton {
                 background: #1a1a2e; color: #ccc;
@@ -182,23 +183,23 @@ class DiscordSettingsDialog(QDialog):
     def _on_show_token_toggled(self, checked: bool) -> None:
         mode = QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
         self._token_edit.setEchoMode(mode)
-        self._show_token_btn.setText("隠す" if checked else "表示")
+        self._show_token_btn.setText(tr("隠す") if checked else tr("表示"))
 
     def _on_save(self) -> None:
         enabled = self._enabled_cb.isChecked()
         token = self._token_edit.text().strip()
         channel_ids = self._parse_channel_ids()
         interrupt = self._interrupt_cb.isChecked()
-        self.update_bot_status("保存中...")
+        self.update_bot_status("saving", tr("保存中..."))
         if self._save_callback:
             self._save_callback(enabled, token, channel_ids, interrupt)
 
     def _on_test_clicked(self) -> None:
         token = self._token_edit.text().strip()
         if not token:
-            self.update_bot_status("エラー: トークンを入力してください")
+            self.update_bot_status("error", tr("エラー: トークンを入力してください"))
             return
-        self.update_bot_status("テスト中...")
+        self.update_bot_status("testing", tr("テスト中..."))
         self._test_btn.setEnabled(False)
         self._save_btn.setEnabled(False)
         t = threading.Thread(target=self._run_test, args=(token,), daemon=True)
@@ -217,7 +218,7 @@ class DiscordSettingsDialog(QDialog):
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
                 username = data.get("username", "Unknown")
-                self._test_result.emit(f"接続OK: {username}")
+                self._test_result.emit("connected", tr("接続OK: {username}").format(username=username))
         except urllib.error.HTTPError as e:
             try:
                 body = json.loads(e.read().decode())
@@ -226,22 +227,25 @@ class DiscordSettingsDialog(QDialog):
                 discord_msg = ""
             detail = f" ({discord_msg})" if discord_msg else ""
             if e.code == 401:
-                self._test_result.emit(f"エラー: トークンが無効です（401{detail}）")
+                self._test_result.emit("error", tr("エラー: トークンが無効です（401{detail}）").format(detail=detail))
             elif e.code == 403:
-                self._test_result.emit(f"エラー: アクセス拒否（403{detail}）Bot設定を確認してください")
+                self._test_result.emit(
+                    "error",
+                    tr("エラー: アクセス拒否（403{detail}）Bot設定を確認してください").format(detail=detail),
+                )
             else:
-                self._test_result.emit(f"エラー: HTTP {e.code}{detail}")
+                self._test_result.emit("error", tr("エラー: HTTP {code}{detail}").format(code=e.code, detail=detail))
         except urllib.error.URLError as e:
-            self._test_result.emit(f"エラー: ネットワークエラー ({e.reason})")
+            self._test_result.emit("error", tr("エラー: ネットワークエラー ({reason})").format(reason=e.reason))
         except Exception as e:
-            self._test_result.emit(f"エラー: {e}")
+            self._test_result.emit("error", tr("エラー: {e}").format(e=e))
 
-    def _on_test_result(self, result: str) -> None:
-        self.update_bot_status(result)
+    def _on_test_result(self, code: str, text: str) -> None:
+        self.update_bot_status(code, text)
         self._test_btn.setEnabled(True)
         self._save_btn.setEnabled(True)
         # 接続テスト成功時は「有効にする」を自動チェック（忘れ防止）
-        if "接続OK" in result:
+        if code == "connected":
             self._enabled_cb.setChecked(True)
 
     def _parse_channel_ids(self) -> list:
@@ -252,13 +256,13 @@ class DiscordSettingsDialog(QDialog):
                 ids.append(int(part))
         return ids
 
-    def update_bot_status(self, status_text: str) -> None:
+    def update_bot_status(self, status_code: str, status_text: str) -> None:
         """Bot の状態ラベルをリアルタイム更新する。DiscordBotSignals.status_changed に接続する。"""
-        if "接続OK" in status_text or "接続完了" in status_text:
+        if status_code == "connected":
             color = "#66bb6a"
-        elif "エラー" in status_text or "無効" in status_text:
+        elif status_code == "error":
             color = "#f88"
-        elif "テスト中" in status_text or "接続中" in status_text or "保存中" in status_text:
+        elif status_code in ("testing", "connecting", "reconnecting", "saving"):
             color = "#ffa726"
         else:
             color = "#aaa"

@@ -1,3 +1,6 @@
+from ..i18n import tr
+
+
 class MakeAiFactoryError(Exception):
     pass
 
@@ -14,7 +17,8 @@ class DiskSpaceError(MakeAiFactoryError):
     def __init__(self, required_gb: float, available_gb: float):
         self.required_gb = required_gb
         self.available_gb = available_gb
-        super().__init__(f"空き容量不足: 必要 {required_gb:.1f}GB / 利用可能 {available_gb:.1f}GB")
+        super().__init__(tr("空き容量不足: 必要 {required:.1f}GB / 利用可能 {available:.1f}GB").format(
+            required=required_gb, available=available_gb))
 
 
 class DownloadError(MakeAiFactoryError):
@@ -26,7 +30,7 @@ class HashMismatchError(MakeAiFactoryError):
         self.path = path
         self.expected = expected
         self.actual = actual
-        super().__init__(f"SHA256不一致: {path}")
+        super().__init__(tr("SHA256不一致: {path}").format(path=path))
 
 
 class ComfyStartError(MakeAiFactoryError):
@@ -36,13 +40,13 @@ class ComfyStartError(MakeAiFactoryError):
 class MissingNodeError(MakeAiFactoryError):
     def __init__(self, missing: list[str]):
         self.missing = missing
-        super().__init__(f"不足custom node class: {', '.join(missing)}")
+        super().__init__(tr("不足custom node class: {missing}").format(missing=", ".join(missing)))
 
 
 class MissingModelError(MakeAiFactoryError):
     def __init__(self, missing: list[str]):
         self.missing = missing
-        super().__init__(f"不足モデル: {', '.join(missing)}")
+        super().__init__(tr("不足モデル: {missing}").format(missing=", ".join(missing)))
 
 
 class PromptValidationError(MakeAiFactoryError):

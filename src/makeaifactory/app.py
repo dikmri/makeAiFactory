@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from .gui.icon_data import app_icon
 
 from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENSIONS
+from .i18n import tr, tr_elapsed
 from .core.app_controller import AppController
 from .core.bot_state import write_bot_state
 from .core.install_config import load_runtime_config, save_runtime_config
@@ -99,6 +100,9 @@ def run_app() -> int:
     app.setStyle("Fusion")
     app.setWindowIcon(app_icon())
 
+    from .i18n import detect_system_language, get_language, set_language
+    set_language(detect_system_language())
+
     exe_dir = _exe_dir()
 
     # インストール先の決定
@@ -122,6 +126,11 @@ def run_app() -> int:
 
     settings = SettingsStore(paths.runtime_root / "settings.json")
 
+    if settings.language:
+        set_language(settings.language)
+    else:
+        settings.set_language(get_language())
+
     if not settings.agreed_to_terms:
         dlg = FirstRunDialog()
         if dlg.exec() != FirstRunDialog.DialogCode.Accepted:
@@ -140,8 +149,8 @@ def run_app() -> int:
             save_runtime_config(exe_dir, new_path)
             QMessageBox.information(
                 window,
-                "インストール場所を変更しました",
-                f"次回起動時に以下の場所を使用します:\n{new_path}\n\nアプリを再起動してください。",
+                tr("インストール場所を変更しました"),
+                tr("次回起動時に以下の場所を使用します:\n{new_path}\n\nアプリを再起動してください。").format(new_path=new_path),
             )
 
     window.set_change_location_callback(_change_install_location)
@@ -149,15 +158,15 @@ def run_app() -> int:
     def _change_auto_save_folder() -> None:
         current = settings.auto_save_folder
         folder = QFileDialog.getExistingDirectory(
-            window, "自動保存先フォルダを選択", current or str(paths.outputs_dir),
+            window, tr("自動保存先フォルダを選択"), current or str(paths.outputs_dir),
         )
         if not folder:
             return
         settings.set_auto_save_folder(folder)
         QMessageBox.information(
             window,
-            "自動保存先を設定しました",
-            f"動画完成時に以下のフォルダへ自動保存します:\n{folder}",
+            tr("自動保存先を設定しました"),
+            tr("動画完成時に以下のフォルダへ自動保存します:\n{folder}").format(folder=folder),
         )
 
     window.set_auto_save_folder_callback(_change_auto_save_folder)
@@ -165,7 +174,7 @@ def run_app() -> int:
     def _on_auto_save_toggled(checked: bool) -> None:
         if checked and not settings.auto_save_folder:
             folder = QFileDialog.getExistingDirectory(
-                window, "自動保存先フォルダを選択", str(paths.outputs_dir),
+                window, tr("自動保存先フォルダを選択"), str(paths.outputs_dir),
             )
             if not folder:
                 window.set_auto_save_checked(False)
@@ -207,25 +216,40 @@ def run_app() -> int:
     def _on_vram_mode_change(mode: str) -> None:
         settings.set("vram_mode", mode)
         from .constants import VRAM_MODE_LABELS
-        label = VRAM_MODE_LABELS.get(mode, mode)
+        label = tr(VRAM_MODE_LABELS.get(mode, mode))
         QMessageBox.information(
             window,
-            "VRAMモードを変更しました",
-            f"{label} に設定しました。\n\n次回起動時に反映されます。\n"
-            "（今すぐ反映するにはアプリを再起動してください）",
+            tr("VRAMモードを変更しました"),
+            tr("{label} に設定しました。\n\n次回起動時に反映されます。\n"
+               "（今すぐ反映するにはアプリを再起動してください）").format(label=label),
         )
 
     window.set_vram_mode_callback(_on_vram_mode_change)
     window.set_current_vram_mode(settings.vram_mode)
 
+    def _on_language_change(lang: str) -> None:
+        settings.set_language(lang)
+        set_language(lang)
+        from .i18n import LANGUAGE_LABELS
+        QMessageBox.information(
+            window,
+            "言語を変更しました / Language changed",
+            tr("{label} に設定しました。\n\n"
+               "次回起動時に反映されます。\n（今すぐ反映するにはアプリを再起動してください）").format(
+                label=LANGUAGE_LABELS.get(lang, lang)),
+        )
+
+    window.set_language_callback(_on_language_change)
+    window.set_current_language(settings.language or get_language())
+
     def _on_preset_change(preset: str) -> None:
         settings.set_model_preset(preset)
         from .constants import MODEL_PRESETS
-        label = MODEL_PRESETS.get(preset, {}).get("label", preset)
+        label = tr(MODEL_PRESETS.get(preset, {}).get("label", preset))
         QMessageBox.information(
             window,
-            "モデルプリセットを変更しました",
-            f"{label} に設定しました。\n次回の生成から反映されます。",
+            tr("モデルプリセットを変更しました"),
+            tr("{label} に設定しました。\n次回の生成から反映されます。").format(label=label),
         )
 
     window.set_preset_change_callback(_on_preset_change)
@@ -264,7 +288,7 @@ def run_app() -> int:
                 release = await asyncio.wait_for(check_for_update(), timeout=15.0)
                 upd_signals.checked.emit(release)
             except asyncio.TimeoutError:
-                upd_signals.failed.emit("タイムアウトしました")
+                upd_signals.failed.emit(tr("タイムアウトしました"))
             except Exception as e:
                 upd_signals.failed.emit(str(e))
 
@@ -284,8 +308,8 @@ def run_app() -> int:
         def _on_apply_skipped() -> None:
             dlg.show_apply_skipped_dev_mode()
             QMessageBox.information(
-                window, "アップデート",
-                "開発モードで実行中のため、アップデートの適用はスキップされました。",
+                window, tr("アップデート"),
+                tr("開発モードで実行中のため、アップデートの適用はスキップされました。"),
             )
 
         upd_signals.progress.connect(_on_progress,      Qt.ConnectionType.QueuedConnection)
@@ -296,7 +320,7 @@ def run_app() -> int:
             try:
                 release = await asyncio.wait_for(check_for_update(), timeout=15.0)
                 if release is None:
-                    upd_signals.failed.emit("最新バージョンが見つかりませんでした")
+                    upd_signals.failed.emit(tr("最新バージョンが見つかりませんでした"))
                     return
 
                 def _cb(pct: float) -> None:
@@ -307,7 +331,7 @@ def run_app() -> int:
                 # 到達した場合は dev モードでスキップされたことを意味する。
                 upd_signals.apply_skipped.emit()
             except asyncio.TimeoutError:
-                upd_signals.failed.emit("タイムアウトしました")
+                upd_signals.failed.emit(tr("タイムアウトしました"))
             except Exception as e:
                 upd_signals.failed.emit(str(e))
 
@@ -356,7 +380,7 @@ def run_app() -> int:
         window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
         write_bot_state(paths.runtime_root, "idle", ctrl.comfy_port)
         if os.environ.get("MAF_UPDATE_APPLIED"):
-            window.update_status(f"✓ v{APP_VERSION} にアップデートされました")
+            window.update_status(tr("✓ v{version} にアップデートされました").format(version=APP_VERSION))
         if settings.discord_bot_enabled and settings.discord_token:
             _start_discord_bot()
 
@@ -381,7 +405,7 @@ def run_app() -> int:
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
-        QMessageBox.information(window, "中断しました", "生成を中断しました")
+        QMessageBox.information(window, tr("中断しました"), tr("生成を中断しました"))
 
     @Slot(str, float, float, float, str)
     def _on_batch_progress(message: str, all_pct: float, image_pct: float, task_pct: float, detail: str) -> None:
@@ -401,20 +425,21 @@ def run_app() -> int:
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.hide_finish_current_btn()
-        mins = int(elapsed_sec // 60)
-        secs = int(elapsed_sec % 60)
-        time_str = f"{mins}分{secs}秒" if mins > 0 else f"{secs}秒"
+        time_str = tr_elapsed(elapsed_sec)
         cancelled = _batch_cancel.is_set()
         finish_after = _batch_finish_after_current.is_set()
         if cancelled and not finish_after:
-            title = "バッチ処理を中断しました"
-            msg = f"{completed}/{total}枚 を処理して中断しました\n経過時間: {time_str}"
+            title = tr("バッチ処理を中断しました")
+            msg = tr("{completed}/{total}枚 を処理して中断しました\n経過時間: {time_str}").format(
+                completed=completed, total=total, time_str=time_str)
         elif cancelled and finish_after:
-            title = "バッチ処理を停止しました"
-            msg = f"{completed}/{total}枚 を処理して停止しました\n経過時間: {time_str}"
+            title = tr("バッチ処理を停止しました")
+            msg = tr("{completed}/{total}枚 を処理して停止しました\n経過時間: {time_str}").format(
+                completed=completed, total=total, time_str=time_str)
         else:
-            title = "バッチ処理が完了しました"
-            msg = f"{completed}枚 の動画を生成しました\n経過時間: {time_str}"
+            title = tr("バッチ処理が完了しました")
+            msg = tr("{completed}枚 の動画を生成しました\n経過時間: {time_str}").format(
+                completed=completed, time_str=time_str)
             _play_complete_se(is_batch=True)
         QMessageBox.information(window, title, msg)
         window.show_drop_page()
@@ -452,8 +477,8 @@ def run_app() -> int:
         if _discord["batch_running"]:
             window.set_current_image(Path(image_path))
             window.update_batch_progress(
-                f"⚡ Discord 割り込み生成中: @{username}",
-                _discord["batch_all_pct"], 0.0, -1.0, "Discord からの依頼を処理中",
+                tr("⚡ Discord 割り込み生成中: @{username}").format(username=username),
+                _discord["batch_all_pct"], 0.0, -1.0, tr("Discord からの依頼を処理中"),
             )
             logger.info("Discord 割り込みジョブ開始: @%s %s", username, image_path)
             return
@@ -464,7 +489,7 @@ def run_app() -> int:
         def _do_discord_cancel() -> None:
             if _discord["ctrl"]:
                 _discord["ctrl"].cancel_current_job()
-            window.update_status("Discord 生成をキャンセル中...")
+            window.update_status(tr("Discord 生成をキャンセル中..."))
 
         window.show_cancel_btn(_do_discord_cancel)
         logger.info("Discord ジョブ開始: @%s %s", username, image_path)
@@ -475,8 +500,8 @@ def run_app() -> int:
             return
         if _discord["batch_running"]:
             window.update_batch_progress(
-                f"⚡ Discord 割り込み生成中 — {msg}",
-                _discord["batch_all_pct"], pct, pct, "Discord からの依頼を処理中",
+                tr("⚡ Discord 割り込み生成中 — {msg}").format(msg=msg),
+                _discord["batch_all_pct"], pct, pct, tr("Discord からの依頼を処理中"),
             )
         else:
             window.update_single_progress(msg, pct, pct)
@@ -487,7 +512,7 @@ def run_app() -> int:
         if _discord["batch_running"]:
             write_bot_state(paths.runtime_root, "batch")
             window.update_batch_progress(
-                "⚡ Discord 割り込み完了 — バッチ再開中...",
+                tr("⚡ Discord 割り込み完了 — バッチ再開中..."),
                 _discord["batch_all_pct"], 100.0, -1.0, "",
             )
             logger.info("Discord 割り込みジョブ完了: %s", output_path)
@@ -507,7 +532,7 @@ def run_app() -> int:
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
-        window.update_status("Discord からの生成をキャンセルしました")
+        window.update_status(tr("Discord からの生成をキャンセルしました"))
 
     @Slot(str)
     def _on_discord_job_error(msg: str) -> None:
@@ -520,7 +545,7 @@ def run_app() -> int:
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
-        window.update_status(f"Discord 生成エラー: {msg}")
+        window.update_status(tr("Discord 生成エラー: {msg}").format(msg=msg))
         logger.error("Discord ジョブエラー: %s", msg)
 
     @Slot()
@@ -544,17 +569,17 @@ def run_app() -> int:
                         _discord["ctrl"].signals.status_changed.connect(
                             dlg.update_bot_status, Qt.ConnectionType.QueuedConnection
                         )
-                    dlg.update_bot_status("接続中...")
-                    window.update_discord_status("接続中...")
+                    dlg.update_bot_status("connecting", tr("接続中..."))
+                    window.update_discord_status("connecting", tr("接続中..."))
                 else:
                     if _discord["ctrl"]:
                         _discord["ctrl"].stop()
                         _discord["ctrl"] = None
-                    window.update_discord_status("停止")
-                    dlg.update_bot_status("停止")
+                    window.update_discord_status("stopped", tr("停止"))
+                    dlg.update_bot_status("stopped", tr("停止"))
             except Exception as e:
                 logger.exception("Discord 設定保存中にエラー")
-                dlg.update_bot_status(f"エラー: {e}")
+                dlg.update_bot_status("error", tr("エラー: {e}").format(e=e))
 
         dlg.set_save_callback(_handle_save)
         dlg.exec()
@@ -565,7 +590,7 @@ def run_app() -> int:
     def _on_remote_url_ready(url: str, pin: str) -> None:
         """URL 公開時にメインウィンドウの drop ページへ QR を表示する。"""
         qr_url = f"{url}?pin={pin}" if pin else url
-        hint = "📱 スキャンで入室 (PIN自動入力)" if pin else "📱 スキャンして入室"
+        hint = tr("📱 スキャンで入室 (PIN自動入力)") if pin else tr("📱 スキャンして入室")
         pixmap = make_qr_pixmap(qr_url, 160)
         if pixmap:
             window.show_remote_room_qr(pixmap, hint)
@@ -603,7 +628,7 @@ def run_app() -> int:
                 sig.job_error.connect(_on_remote_job_error,            Qt.ConnectionType.QueuedConnection)
                 settings.set_remote_room_config(config_dict)
                 ctrl.start(cfg)
-                dlg.update_status("starting", "起動中...")
+                dlg.update_status("starting", tr("起動中..."))
 
             def _handle_stop() -> None:
                 ctrl = _remote_room.get("ctrl")
@@ -626,13 +651,13 @@ def run_app() -> int:
         _remote_room["generating"] = True
         write_bot_state(paths.runtime_root, "single")
         window.enter_single_mode(Path(image_path))
-        window.update_single_progress(f"🌐 投入口 生成中: #{job_id[:6]}", 0.0, -1.0)
+        window.update_single_progress(tr("🌐 投入口 生成中: #{job_id}").format(job_id=job_id[:6]), 0.0, -1.0)
 
         def _do_remote_cancel() -> None:
             ctrl = _remote_room.get("ctrl")
             if ctrl:
                 ctrl.cancel_current_job()
-            window.update_status("🌐 投入口 生成をキャンセル中...")
+            window.update_status(tr("🌐 投入口 生成をキャンセル中..."))
 
         window.show_cancel_btn(_do_remote_cancel)
         logger.info("Remote Room ジョブ開始: %s", job_id)
@@ -657,7 +682,7 @@ def run_app() -> int:
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
-        window.update_status(f"🌐 投入口 生成エラー: {msg}")
+        window.update_status(tr("🌐 投入口 生成エラー: {msg}").format(msg=msg))
         logger.error("Remote Room ジョブエラー: %s — %s", job_id, msg)
 
     @Slot()
@@ -689,13 +714,13 @@ def run_app() -> int:
             try:
                 source = json.loads(text)
             except json.JSONDecodeError as e:
-                return f"JSON構文エラー: {e}"
+                return tr("JSON構文エラー: {e}").format(e=e)
             if not isinstance(source, dict) or not source:
-                return "ワークフローが空です"
+                return tr("ワークフローが空です")
 
             sanitized = sanitize_workflow(source)
             if not sanitized or OUTPUT_VIDEO_NODE_ID not in sanitized or LOADIMAGE_NODE_ID not in sanitized:
-                return "必須ノード (画像入力/動画出力) が含まれていないため適用できません"
+                return tr("必須ノード (画像入力/動画出力) が含まれていないため適用できません")
 
             try:
                 with paths.api_source_json().open("w", encoding="utf-8") as f:
@@ -706,7 +731,7 @@ def run_app() -> int:
                 with (paths.workflow_dir / "workflow_analysis_report.md").open("w", encoding="utf-8") as f:
                     f.write(report)
             except Exception as e:
-                return f"保存に失敗しました: {e}"
+                return tr("保存に失敗しました: {e}").format(e=e)
 
             ctrl.reload_workflow_template()
             logger.info("開発モード: ワークフローJSONを保存・適用しました")
@@ -763,19 +788,20 @@ def run_app() -> int:
             def _upd_pct(pct: float) -> None:
                 signals.setup_progress.emit(SetupProgress(
                     state=SetupState.DOWNLOADING_MODELS,
-                    message=f"v{release.version} をダウンロード中... {pct * 100:.0f}%",
+                    message=tr("v{version} をダウンロード中... {pct:.0f}%").format(
+                        version=release.version, pct=pct * 100),
                     percent=pct * 100,
                 ))
 
             signals.setup_progress.emit(SetupProgress(
                 state=SetupState.DOWNLOADING_MODELS,
-                message=f"新しいバージョン v{release.version} があります。ダウンロード中...",
+                message=tr("新しいバージョン v{version} があります。ダウンロード中...").format(version=release.version),
                 percent=0,
             ))
             zip_path = await download_update(release, progress_cb=_upd_pct)
             signals.setup_progress.emit(SetupProgress(
                 state=SetupState.DOWNLOADING_MODELS,
-                message="アップデートを適用して再起動します...",
+                message=tr("アップデートを適用して再起動します..."),
                 percent=100,
             ))
             apply_update_and_restart(zip_path)
@@ -798,14 +824,14 @@ def run_app() -> int:
                 ctrl.get_system_info_text(), settings.installed_presets, settings.model_preset,
                 ctrl.sage_attention_available,
             )
-            signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message="準備完了"))
+            signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message=tr("準備完了")))
         except SystemUnsupportedError as e:
-            signals.error.emit("対応環境外", str(e), "", False)
+            signals.error.emit(tr("対応環境外"), str(e), "", False)
         except MakeAiFactoryError as e:
-            signals.error.emit("セットアップ失敗", str(e), "", True)
+            signals.error.emit(tr("セットアップ失敗"), str(e), "", True)
         except Exception as e:
             logger.exception("セットアップ中に予期しないエラー")
-            signals.error.emit("セットアップ失敗", str(e), "", True)
+            signals.error.emit(tr("セットアップ失敗"), str(e), "", True)
 
     async def _run_job(image_path: Path) -> None:
         def _cb(p: JobProgress):
@@ -827,13 +853,13 @@ def run_app() -> int:
             if _single_cancel.is_set():
                 signals.job_cancelled.emit()
             else:
-                signals.error.emit("生成失敗", str(e), "", True)
+                signals.error.emit(tr("生成失敗"), str(e), "", True)
         except Exception as e:
             if _single_cancel.is_set():
                 signals.job_cancelled.emit()
             else:
                 logger.exception("生成中に予期しないエラー")
-                signals.error.emit("生成失敗", str(e), "", False)
+                signals.error.emit(tr("生成失敗"), str(e), "", False)
 
     async def _run_batch(input_folder: Path, output_folder: Path) -> None:
         images = sorted(
@@ -842,7 +868,11 @@ def run_app() -> int:
         )
         total = len(images)
         if total == 0:
-            signals.error.emit("画像が見つかりません", f"{input_folder} に対応画像がありません", "", False)
+            signals.error.emit(
+                tr("画像が見つかりません"),
+                tr("{folder} に対応画像がありません").format(folder=input_folder),
+                "", False,
+            )
             return
 
         end_dir = input_folder / "end"
@@ -862,7 +892,7 @@ def run_app() -> int:
                 img_pct = _job_overall_pct(p)
                 all_pct = (idx + img_pct / 100) / total * 100
                 signals.batch_progress.emit(
-                    f"フォルダ生成 ({idx + 1}/{total}): {name}",
+                    tr("フォルダ生成 ({idx}/{total}): {name}").format(idx=idx + 1, total=total, name=name),
                     all_pct,
                     img_pct,
                     _task_pct(p),
@@ -887,8 +917,8 @@ def run_app() -> int:
                 logger.info("Discord 割り込み待機 (バッチ %d/%d 完了後)", i + 1, total)
                 all_pct_so_far = (i + 1) / total * 100
                 signals.batch_progress.emit(
-                    f"フォルダ生成 ({i + 1}/{total}) — ⚡ Discord 割り込み生成中...",
-                    all_pct_so_far, 100.0, -1.0, "Discord からのリクエストを優先処理中",
+                    tr("フォルダ生成 ({idx}/{total}) — ⚡ Discord 割り込み生成中...").format(idx=i + 1, total=total),
+                    all_pct_so_far, 100.0, -1.0, tr("Discord からのリクエストを優先処理中"),
                 )
                 while disc_ctrl.interrupt_active.is_set():
                     # 「次の動画で終了」はソフトキャンセルなので割り込み完了まで待つ。
@@ -916,13 +946,13 @@ def run_app() -> int:
     def _on_image_dropped(path: Path) -> None:
         write_bot_state(paths.runtime_root, "single")
         window.enter_single_mode(path)
-        window.update_single_progress("生成を準備しています...", 0.0, -1.0)
+        window.update_single_progress(tr("生成を準備しています..."), 0.0, -1.0)
 
         _single_cancel.clear()
 
         def _do_cancel_single() -> None:
             _single_cancel.set()
-            window.update_status("中断中...")
+            window.update_status(tr("中断中..."))
             pool = QThreadPool.globalInstance()
             pool.start(_Worker(_cancel_current_job(), signals))
 
@@ -954,7 +984,7 @@ def run_app() -> int:
 
         def _do_cancel() -> None:
             _batch_cancel.set()
-            window.update_status("中断中...")
+            window.update_status(tr("中断中..."))
             window.hide_finish_current_btn()
             pool = QThreadPool.globalInstance()
             pool.start(_Worker(_cancel_current_job(), signals))
@@ -964,16 +994,16 @@ def run_app() -> int:
                 # 既に予約済み → 生成完了前ならここで取り消せる
                 _batch_finish_after_current.clear()
                 _batch_cancel.clear()
-                window.update_status("フォルダ生成を続行します")
-                window.set_finish_current_btn_text("現在の生成で終了")
+                window.update_status(tr("フォルダ生成を続行します"))
+                window.set_finish_current_btn_text(tr("現在の生成で終了"))
             else:
                 _batch_cancel.set()
                 _batch_finish_after_current.set()
-                window.update_status("現在の生成が完了したら停止します...")
-                window.set_finish_current_btn_text("終了予約を取り消す")
+                window.update_status(tr("現在の生成が完了したら停止します..."))
+                window.set_finish_current_btn_text(tr("終了予約を取り消す"))
 
         window.enter_batch_mode()
-        window.update_batch_progress("フォルダ生成を開始しています...", 0.0, 0.0, -1.0)
+        window.update_batch_progress(tr("フォルダ生成を開始しています..."), 0.0, 0.0, -1.0)
         window.show_cancel_btn(_do_cancel)
         window.show_finish_current_btn(_do_finish_after_current)
 
@@ -986,7 +1016,7 @@ def run_app() -> int:
     window.dev_mode_requested.connect(_on_dev_mode_requested,    Qt.ConnectionType.QueuedConnection)
     window.remote_room_requested.connect(_on_remote_room_requested, Qt.ConnectionType.QueuedConnection)
 
-    window.show_progress_indeterminate("セットアップを確認しています...")
+    window.show_progress_indeterminate(tr("セットアップを確認しています..."))
     window.show()
 
     pool = QThreadPool.globalInstance()
@@ -1045,10 +1075,10 @@ def _trigger_preset_install(ctrl: AppController, window: MainWindow, paths: AppP
                 await ctrl.install_presets(presets, on_progress=_cb)
             except Exception as e:
                 logger.exception("プリセットインストールエラー: %s", presets)
-                inst_signals.error.emit("インストール失敗", str(e), "", False)
+                inst_signals.error.emit(tr("インストール失敗"), str(e), "", False)
                 return
             inst_signals.setup_progress.emit(SetupProgress(
-                state=SetupState.READY, message="インストール完了", percent=100, overall_percent=100
+                state=SetupState.READY, message=tr("インストール完了"), percent=100, overall_percent=100
             ))
 
         pool = QThreadPool.globalInstance()
@@ -1064,16 +1094,16 @@ def _trigger_repair(ctrl: AppController, window: MainWindow, paths: AppPaths, se
     state = RuntimeState(paths.runtime_root)
     repair = RepairManager(paths.runtime_root, state)
     repair.reset_custom_nodes()
-    window.show_progress_indeterminate("修復中...")
+    window.show_progress_indeterminate(tr("修復中..."))
     signals = _AsyncSignals()
 
     async def _repair():
         try:
             ctrl2 = AppController(paths, settings)
             await ctrl2.setup()
-            signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message="修復完了"))
+            signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message=tr("修復完了")))
         except Exception as e:
-            signals.error.emit("修復失敗", str(e), "", False)
+            signals.error.emit(tr("修復失敗"), str(e), "", False)
 
     pool = QThreadPool.globalInstance()
     pool.start(_Worker(_repair(), signals))

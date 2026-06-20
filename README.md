@@ -1,7 +1,18 @@
+🌐 **Languages:** [日本語](README.md) | [English](README.en.md) | [中文](README.zh.md) | [한국어](README.ko.md)
+
+---
+
 # makeAiFactory
 
 <p align="center">
   <img src="assets/icon.png" width="128" height="128" alt="makeAiFactory icon">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/dikmri/makeAiFactory/releases/latest"><img src="https://img.shields.io/github/v/release/dikmri/makeAiFactory" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-Windows-0078D6.svg" alt="Platform: Windows">
+  <img src="https://img.shields.io/badge/python-3.13-blue.svg" alt="Python 3.13">
 </p>
 
 > 画像をドラッグ＆ドロップするだけで、ローカルPCがAI動画工場に変わる。

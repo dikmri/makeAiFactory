@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr, tr_elapsed
+
 _BLUE = """
     QProgressBar {
         border: 1px solid #333; border-radius: 5px;
@@ -53,11 +55,6 @@ _LABEL_AMBER = "color: #ffa726; font-size: 11px;"
 
 _IMG_MAX_W = 360
 _IMG_MAX_H = 220
-
-
-def _fmt(sec: float) -> str:
-    m, s = int(sec // 60), int(sec % 60)
-    return f"{m}分{s}秒" if m > 0 else f"{s}秒"
 
 
 class ProgressView(QWidget):
@@ -106,7 +103,7 @@ class ProgressView(QWidget):
         layout.addSpacing(4)
 
         # ── タイトル ─────────────────────────────────────────────────────
-        self._title = QLabel("処理中...")
+        self._title = QLabel(tr("処理中..."))
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setStyleSheet("color: #eee; font-size: 15px; font-weight: bold;")
         self._title.setWordWrap(True)
@@ -114,21 +111,21 @@ class ProgressView(QWidget):
         layout.addSpacing(4)
 
         # ── バー1: 全体進捗 (blue) — 常時表示 ────────────────────────────
-        self._lbl1 = QLabel("全体進捗")
+        self._lbl1 = QLabel(tr("全体進捗"))
         self._lbl1.setStyleSheet(_LABEL_BLUE)
         self._bar1 = self._mk_bar(_BLUE)
         layout.addWidget(self._lbl1)
         layout.addWidget(self._bar1)
 
         # ── バー2: 現在の画像 (green) — バッチ時のみ ─────────────────────
-        self._lbl2 = QLabel("現在の画像")
+        self._lbl2 = QLabel(tr("現在の画像"))
         self._lbl2.setStyleSheet(_LABEL_GREEN)
         self._bar2 = self._mk_bar(_GREEN)
         layout.addWidget(self._lbl2)
         layout.addWidget(self._bar2)
 
         # ── バー3: 現在のステップ (amber) — 単体/バッチ時 ────────────────
-        self._lbl3 = QLabel("現在のステップ")
+        self._lbl3 = QLabel(tr("現在のステップ"))
         self._lbl3.setStyleSheet(_LABEL_AMBER)
         self._bar3 = self._mk_bar(_AMBER)
         layout.addWidget(self._lbl3)
@@ -143,7 +140,7 @@ class ProgressView(QWidget):
         layout.addWidget(self._eta)
 
         # ── 現在の生成で終了ボタン（バッチ専用）────────────────────────────
-        self._finish_current_btn = QPushButton("現在の生成で終了")
+        self._finish_current_btn = QPushButton(tr("現在の生成で終了"))
         self._finish_current_btn.setStyleSheet("""
             QPushButton {
                 background: #1a1500; color: #ffa726;
@@ -156,7 +153,7 @@ class ProgressView(QWidget):
         layout.addWidget(self._finish_current_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # ── 中断ボタン ────────────────────────────────────────────────────
-        self._cancel_btn = QPushButton("中断")
+        self._cancel_btn = QPushButton(tr("中断"))
         self._cancel_btn.setStyleSheet("""
             QPushButton {
                 background: #2a1a1a; color: #f88;
@@ -222,7 +219,7 @@ class ProgressView(QWidget):
         self._img_preview.setVisible(False)
         self._img_name.setVisible(False)
         self._finish_current_btn.setVisible(False)
-        self._lbl1.setText("進捗")
+        self._lbl1.setText(tr("進捗"))
         self._lbl1.setVisible(True)
         self._bar1.setVisible(True)
         for w in (self._lbl2, self._bar2, self._lbl3, self._bar3):
@@ -234,7 +231,7 @@ class ProgressView(QWidget):
         self._overall_pct = 0.0
         self._start_mono = time.monotonic()
         self._finish_current_btn.setVisible(False)
-        self._lbl1.setText("全体進捗")
+        self._lbl1.setText(tr("全体進捗"))
         self._bar1.setRange(0, 100)
         self._bar1.setValue(0)
         for w in (self._lbl1, self._bar1, self._lbl3, self._bar3):
@@ -251,8 +248,8 @@ class ProgressView(QWidget):
         self._mode = self._BATCH
         self._overall_pct = 0.0
         self._start_mono = time.monotonic()
-        self._lbl1.setText("全体進捗")
-        self._lbl2.setText("現在の画像")
+        self._lbl1.setText(tr("全体進捗"))
+        self._lbl2.setText(tr("現在の画像"))
         self._bar1.setRange(0, 100)
         self._bar1.setValue(0)
         self._bar2.setRange(0, 100)
@@ -323,16 +320,16 @@ class ProgressView(QWidget):
 
     def _tick(self) -> None:
         elapsed = time.monotonic() - self._start_mono
-        elapsed_str = _fmt(elapsed)
+        elapsed_str = tr_elapsed(elapsed)
         eta_str = ""
         if self._mode in (self._SINGLE, self._BATCH) and self._overall_pct > 3:
             try:
                 remaining = elapsed / (self._overall_pct / 100) * (1 - self._overall_pct / 100)
                 if remaining > 0:
-                    eta_str = f"予測完了: 約{_fmt(remaining)}"
+                    eta_str = tr("予測完了: 約{remaining}").format(remaining=tr_elapsed(remaining))
             except ZeroDivisionError:
                 pass
-        text = f"経過: {elapsed_str}"
+        text = tr("経過: {elapsed}").format(elapsed=elapsed_str)
         if eta_str:
             text += f"  |  {eta_str}"
         self._eta.setText(text)
@@ -366,7 +363,7 @@ class ProgressView(QWidget):
         except RuntimeError:
             pass
         self._finish_current_btn.clicked.connect(callback)
-        self._finish_current_btn.setText("現在の生成で終了")
+        self._finish_current_btn.setText(tr("現在の生成で終了"))
         self._finish_current_btn.setVisible(True)
 
     def set_finish_current_text(self, text: str) -> None:

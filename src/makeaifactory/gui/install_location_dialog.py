@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
+
 _NEEDED_GB = 45.0
 
 
@@ -23,7 +25,7 @@ class InstallLocationDialog(QDialog):
 
     def __init__(self, default_path: Path, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("makeAiFactory - インストール場所の選択")
+        self.setWindowTitle(tr("makeAiFactory - インストール場所の選択"))
         self.setMinimumWidth(600)
         self.setWindowFlags(
             self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
@@ -33,18 +35,18 @@ class InstallLocationDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(28, 24, 28, 24)
 
-        title = QLabel("インストール場所を選択してください")
+        title = QLabel(tr("インストール場所を選択してください"))
         title.setStyleSheet(
             "font-size: 17px; font-weight: bold; color: #4fc3f7; margin-bottom: 4px;"
         )
         layout.addWidget(title)
 
-        desc = QLabel(
+        desc = QLabel(tr(
             "AIモデルや処理環境を保存するフォルダを選択してください。\n"
-            f"初回セットアップで約 {_NEEDED_GB:.0f} GB のデータがダウンロードされます。\n"
+            "初回セットアップで約 {needed_gb:.0f} GB のデータがダウンロードされます。\n"
             "空き容量が十分なドライブを選んでください。\n"
             "※ パスに日本語などの全角文字が含まれるとインストールが失敗します。"
-        )
+        ).format(needed_gb=_NEEDED_GB))
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #bbb; font-size: 13px; line-height: 1.5;")
         layout.addWidget(desc)
@@ -58,7 +60,7 @@ class InstallLocationDialog(QDialog):
         )
         path_layout.addWidget(self._path_edit)
 
-        browse_btn = QPushButton("参照...")
+        browse_btn = QPushButton(tr("参照..."))
         browse_btn.setFixedWidth(80)
         browse_btn.setStyleSheet(
             "QPushButton { background: #2a2a40; color: #ccc; border: 1px solid #555; "
@@ -81,7 +83,7 @@ class InstallLocationDialog(QDialog):
 
         layout.addSpacing(6)
 
-        self._ok_btn = QPushButton("このフォルダにインストールする")
+        self._ok_btn = QPushButton(tr("このフォルダにインストールする"))
         self._ok_btn.setStyleSheet(
             "QPushButton { background: #1565c0; color: white; border: none; "
             "border-radius: 6px; padding: 12px 32px; font-size: 14px; font-weight: bold; } "
@@ -98,7 +100,7 @@ class InstallLocationDialog(QDialog):
     def _browse(self) -> None:
         chosen = QFileDialog.getExistingDirectory(
             self,
-            "インストール先のフォルダを選択（runtime フォルダが自動作成されます）",
+            tr("インストール先のフォルダを選択（runtime フォルダが自動作成されます）"),
         )
         if chosen:
             self._path_edit.setText(str(Path(chosen) / "runtime"))
@@ -120,10 +122,10 @@ class InstallLocationDialog(QDialog):
             is_ascii = False
 
         if not is_ascii:
-            self._warn_label.setText(
+            self._warn_label.setText(tr(
                 "パスに日本語などの全角文字が含まれています。"
                 "別の場所（例: D:\\makeAiFactory\\runtime）を選んでください。"
-            )
+            ))
             self._warn_label.setVisible(True)
             self._space_label.setText("")
             self._ok_btn.setEnabled(False)
@@ -138,11 +140,12 @@ class InstallLocationDialog(QDialog):
             free_gb = usage.free / 1024 ** 3
             if free_gb < _NEEDED_GB:
                 self._space_label.setText(
-                    f"空き容量: {free_gb:.1f} GB  ※推奨 {_NEEDED_GB:.0f} GB 以上"
+                    tr("空き容量: {free_gb:.1f} GB  ※推奨 {needed_gb:.0f} GB 以上").format(
+                        free_gb=free_gb, needed_gb=_NEEDED_GB)
                 )
                 self._space_label.setStyleSheet("color: #ffb74d; font-size: 12px;")
             else:
-                self._space_label.setText(f"空き容量: {free_gb:.1f} GB")
+                self._space_label.setText(tr("空き容量: {free_gb:.1f} GB").format(free_gb=free_gb))
                 self._space_label.setStyleSheet("color: #81c784; font-size: 12px;")
         except Exception:
             self._space_label.setText("")

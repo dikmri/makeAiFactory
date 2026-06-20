@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 
 from ..domain.errors import SetupError
+from ..i18n import tr
 from .downloader import download_file
 from .uv_manager import UvManager
 
@@ -187,7 +188,7 @@ async def install_torch(
 
     verify_cmd = [
         str(python), "-c",
-        "import torch; assert torch.cuda.is_available(), 'CUDA利用不可'; "
+        f"import torch; assert torch.cuda.is_available(), {tr('CUDA利用不可')!r}; "
         "print('CUDA OK:', torch.cuda.get_device_name(0))"
     ]
     result = subprocess.run(
@@ -195,9 +196,8 @@ async def install_torch(
     )
     if result.returncode != 0:
         raise SetupError(
-            f"PyTorch CUDA検証失敗。\n"
-            f"NVIDIAドライバが古い可能性があります。\n\n"
-            f"{result.stderr[-500:]}"
+            tr("PyTorch CUDA検証失敗。\nNVIDIAドライバが古い可能性があります。\n\n{stderr}").format(
+                stderr=result.stderr[-500:])
         )
     logger.info("PyTorch検証OK: %s", result.stdout.strip())
 

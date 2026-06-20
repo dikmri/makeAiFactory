@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..constants import VRAM_MINIMUM_GB, VRAM_RECOMMENDED_GB
 from ..domain.errors import SystemUnsupportedError
+from ..i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -153,11 +154,11 @@ def probe_system(runtime_root: Path) -> SystemInfo:
 
 def validate_system(info: SystemInfo) -> None:
     if not info.has_nvidia_gpu:
-        raise SystemUnsupportedError(
+        raise SystemUnsupportedError(tr(
             "makeAiFactoryを実行できません。\n\n"
             "原因:\nNVIDIA GPUが見つかりません。\n\n"
             "makeAiFactoryは現在、Windows + NVIDIA GPU環境のみ対応しています。"
-        )
+        ))
 
     gpu = info.primary_gpu
     assert gpu is not None

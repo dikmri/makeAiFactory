@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import Callable
 
+from ..i18n import tr
+
 logger = logging.getLogger(__name__)
 
 CLOUDFLARED_DOWNLOAD_URL = (
@@ -59,7 +61,7 @@ async def download_cloudflared(
         if on_progress:
             on_progress(msg, pct)
 
-    _notify("cloudflared をダウンロード中...", 0.0)
+    _notify(tr("cloudflared をダウンロード中..."), 0.0)
     logger.info("cloudflared ダウンロード開始: %s", CLOUDFLARED_DOWNLOAD_URL)
 
     try:
@@ -78,14 +80,15 @@ async def download_cloudflared(
                             mb_done = downloaded / 1024 / 1024
                             mb_total = total / 1024 / 1024
                             _notify(
-                                f"cloudflared をダウンロード中... {mb_done:.1f}/{mb_total:.1f} MB",
+                                tr("cloudflared をダウンロード中... {done:.1f}/{total:.1f} MB").format(
+                                    done=mb_done, total=mb_total),
                                 pct,
                             )
     except Exception as e:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(
-            f"cloudflared のダウンロードに失敗しました:\n{e}\n\n"
-            "ネットワーク接続を確認してください。"
+            tr("cloudflared のダウンロードに失敗しました:\n{e}\n\n"
+               "ネットワーク接続を確認してください。").format(e=e)
         ) from e
 
     # 検証
@@ -93,16 +96,16 @@ async def download_cloudflared(
     if size < _MIN_SIZE_BYTES:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(
-            f"ダウンロードしたファイルが小さすぎます ({size / 1024 / 1024:.1f} MB)。"
-            "ネットワーク接続を確認してください。"
+            tr("ダウンロードしたファイルが小さすぎます ({size:.1f} MB)。"
+               "ネットワーク接続を確認してください。").format(size=size / 1024 / 1024)
         )
     if not _is_valid_exe(tmp):
         tmp.unlink(missing_ok=True)
-        raise RuntimeError("ダウンロードしたファイルが有効な実行ファイルではありません。")
+        raise RuntimeError(tr("ダウンロードしたファイルが有効な実行ファイルではありません。"))
 
     tmp.replace(dest)
     logger.info("cloudflared ダウンロード完了: %s (%.1f MB)", dest, dest.stat().st_size / 1024 / 1024)
-    _notify("cloudflared のダウンロードが完了しました ✓", 100.0)
+    _notify(tr("cloudflared のダウンロードが完了しました ✓"), 100.0)
     return dest
 
 

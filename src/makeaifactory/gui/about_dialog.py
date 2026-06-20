@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
+
 
 class AboutDialog(QDialog):
     """ヘルプ > バージョン情報。手動でのアップデート確認・適用に対応する。"""
@@ -22,7 +24,7 @@ class AboutDialog(QDialog):
         self._app_version = app_version
         self._mode = "idle"  # "idle" | "checking" | "update_available" | "downloading"
 
-        self.setWindowTitle(f"{app_name}について")
+        self.setWindowTitle(tr("{app_name}について").format(app_name=app_name))
         self.setMinimumWidth(380)
 
         layout = QVBoxLayout(self)
@@ -32,11 +34,11 @@ class AboutDialog(QDialog):
         title.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
 
-        desc = QLabel(
+        desc = QLabel(tr(
             "画像をドラッグ＆ドロップするだけでAI動画を生成するアプリです。\n"
             "生成はすべてローカルPCで行われます。\n"
             "入力画像・生成動画が外部送信されることはありません。"
-        )
+        ))
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #aaa; font-size: 12px;")
         layout.addWidget(desc)
@@ -47,11 +49,11 @@ class AboutDialog(QDialog):
         layout.addWidget(self._status_label)
 
         btn_row = QHBoxLayout()
-        self._action_btn = QPushButton("アップデートを確認")
+        self._action_btn = QPushButton(tr("アップデートを確認"))
         self._action_btn.clicked.connect(self._on_action_clicked)
         btn_row.addWidget(self._action_btn)
         btn_row.addStretch()
-        close_btn = QPushButton("閉じる")
+        close_btn = QPushButton(tr("閉じる"))
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
@@ -65,33 +67,33 @@ class AboutDialog(QDialog):
     def show_checking(self) -> None:
         self._mode = "checking"
         self._action_btn.setEnabled(False)
-        self._status_label.setText("アップデートを確認しています...")
+        self._status_label.setText(tr("アップデートを確認しています..."))
 
     def show_up_to_date(self) -> None:
         self._mode = "idle"
         self._action_btn.setEnabled(True)
-        self._action_btn.setText("アップデートを確認")
-        self._status_label.setText(f"最新バージョンです (v{self._app_version})")
+        self._action_btn.setText(tr("アップデートを確認"))
+        self._status_label.setText(tr("最新バージョンです (v{version})").format(version=self._app_version))
 
     def show_update_available(self, version: str) -> None:
         self._mode = "update_available"
         self._action_btn.setEnabled(True)
-        self._action_btn.setText("ダウンロードして更新")
-        self._status_label.setText(f"新しいバージョン v{version} が利用可能です")
+        self._action_btn.setText(tr("ダウンロードして更新"))
+        self._status_label.setText(tr("新しいバージョン v{version} が利用可能です").format(version=version))
 
     def show_check_failed(self, message: str) -> None:
         self._mode = "idle"
         self._action_btn.setEnabled(True)
-        self._action_btn.setText("アップデートを確認")
-        self._status_label.setText(f"確認に失敗しました: {message}")
+        self._action_btn.setText(tr("アップデートを確認"))
+        self._status_label.setText(tr("確認に失敗しました: {message}").format(message=message))
 
     def show_downloading(self, pct: float) -> None:
         self._mode = "downloading"
         self._action_btn.setEnabled(False)
-        self._status_label.setText(f"ダウンロード中... {pct:.0f}%")
+        self._status_label.setText(tr("ダウンロード中... {pct:.0f}%").format(pct=pct))
 
     def show_apply_skipped_dev_mode(self) -> None:
         self._mode = "idle"
         self._action_btn.setEnabled(True)
-        self._action_btn.setText("アップデートを確認")
-        self._status_label.setText("開発モードのため適用をスキップしました")
+        self._action_btn.setText(tr("アップデートを確認"))
+        self._status_label.setText(tr("開発モードのため適用をスキップしました"))

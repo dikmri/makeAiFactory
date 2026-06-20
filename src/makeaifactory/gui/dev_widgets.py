@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
+
 _ACCENT   = "#4fc3f7"
 _BG_DARK  = "#0d0d1a"
 _BG_MID   = "#1a1a2e"
@@ -407,7 +409,7 @@ class LoraListWidget(QWidget):
         title_lbl.setStyleSheet(f"color: {_TEXT_DIM}; font-size: 11px; font-weight: bold;")
         header_row.addWidget(title_lbl)
         header_row.addStretch()
-        add_btn = QPushButton("+ LoRAを追加")
+        add_btn = QPushButton(tr("+ LoRAを追加"))
         add_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; color: {_ACCENT};

@@ -8,6 +8,7 @@ from typing import Callable
 import httpx
 
 from ..domain.errors import DownloadError
+from ..i18n import tr
 from .hash_verifier import verify_sha256
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ async def download_file(
                 if resp.status_code == 416:
                     logger.info("既存partファイルがサーバと一致、再検証します: %s", dest.name)
                 elif resp.status_code not in (200, 206):
-                    raise DownloadError(f"DL失敗 ({resp.status_code}): {url}")
+                    raise DownloadError(tr("DL失敗 ({status}): {url}").format(status=resp.status_code, url=url))
 
                 total = int(resp.headers.get("content-length", 0))
                 if resp.status_code == 206:
@@ -54,7 +55,7 @@ async def download_file(
                             progress_cb(downloaded, total)
 
     except httpx.HTTPError as e:
-        raise DownloadError(f"ネットワークエラー: {e}") from e
+        raise DownloadError(tr("ネットワークエラー: {e}").format(e=e)) from e
 
     if sha256:
         verify_sha256(part, sha256)

@@ -13,6 +13,7 @@ from ..core.log_manager import get_setup_logger, setup_logging
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..constants import COMFY_STARTUP_TIMEOUT
+from ..i18n import tr
 from ..domain.errors import (
     ComfyStartError,
     DiskSpaceError,
@@ -71,23 +72,23 @@ class AppController:
     def _load_workflow_template(self) -> dict:
         tpl_path = self._paths.runtime_template_json()
         if not tpl_path.exists():
-            raise SetupError("workflow templateが見つかりません。セットアップを再実行してください。")
+            raise SetupError(tr("workflow templateが見つかりません。セットアップを再実行してください。"))
         with tpl_path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
     def get_system_info_text(self) -> str:
         if not self._system_info:
-            return "システム情報未取得"
+            return tr("システム情報未取得")
         info = self._system_info
         gpu = info.primary_gpu
         lines = [
             f"OS: {info.os_name} {info.os_version}",
             f"CPU: {info.cpu}",
             f"RAM: {info.ram_gb:.1f} GB",
-            f"GPU: {gpu.name if gpu else 'なし'}",
+            f"GPU: {gpu.name if gpu else tr('なし')}",
             f"VRAM: {gpu.vram_gb:.1f} GB" if gpu else "VRAM: -",
-            f"nvidia-smi: {'利用可能' if info.nvidia_smi_available else '利用不可'}",
-            f"Disk空き: {info.disk_free_gb:.1f} GB",
+            f"nvidia-smi: {tr('利用可能') if info.nvidia_smi_available else tr('利用不可')}",
+            tr("Disk空き: {free:.1f} GB").format(free=info.disk_free_gb),
             f"RuntimeRoot: {self._paths.runtime_root}",
             f"RuntimeState: {self._state.setup_state.value}",
         ]
@@ -120,7 +121,7 @@ class AppController:
         if on_progress:
             on_progress(SetupProgress(
                 state=SetupState.INSTALLING_SAGEATTENTION,
-                message="高速化モジュール (SageAttention) を確認しています...",
+                message=tr("高速化モジュール (SageAttention) を確認しています..."),
             ))
         paths.uv_dir.mkdir(parents=True, exist_ok=True)
         uv = await UvManager.ensure(paths.uv_dir, rm.uv_windows_url, rm.uv_sha256)
@@ -145,7 +146,7 @@ class AppController:
             if on_progress:
                 on_progress(p)
 
-        _progress(SetupState.CHECKING_SYSTEM, "システムを確認しています...")
+        _progress(SetupState.CHECKING_SYSTEM, tr("システムを確認しています..."))
         self._system_info = probe_system(paths.runtime_root)
         try:
             validate_system(self._system_info)
@@ -155,32 +156,32 @@ class AppController:
 
         rm = self._load_runtime_manifest()
 
-        _progress(SetupState.PREPARING_RUNTIME_DIR, "runtimeディレクトリを準備しています...")
+        _progress(SetupState.PREPARING_RUNTIME_DIR, tr("runtimeディレクトリを準備しています..."))
         paths.uv_dir.mkdir(parents=True, exist_ok=True)
 
-        _progress(SetupState.INSTALLING_UV, "uvをセットアップしています...")
+        _progress(SetupState.INSTALLING_UV, tr("uvをセットアップしています..."))
         uv = await UvManager.ensure(paths.uv_dir, rm.uv_windows_url, rm.uv_sha256)
 
-        _progress(SetupState.INSTALLING_PYTHON, "Python環境を準備しています...")
-        _progress(SetupState.CREATING_VENV, "仮想環境を作成しています...")
+        _progress(SetupState.INSTALLING_PYTHON, tr("Python環境を準備しています..."))
+        _progress(SetupState.CREATING_VENV, tr("仮想環境を作成しています..."))
         if not paths.venv_dir.exists():
             uv.create_venv(paths.venv_dir, rm.python_version)
 
-        _progress(SetupState.INSTALLING_TORCH, "PyTorchをインストールしています（時間がかかります）...")
+        _progress(SetupState.INSTALLING_TORCH, tr("PyTorchをインストールしています（時間がかかります）..."))
         await install_torch(
             paths.venv_dir, uv,
             rm.torch_version, rm.torchvision_version, rm.torchaudio_version,
             rm.torch_cuda_variant, rm.torch_index_url,
         )
 
-        _progress(SetupState.INSTALLING_COMFYUI, "ComfyUIをセットアップしています...")
+        _progress(SetupState.INSTALLING_COMFYUI, tr("ComfyUIをセットアップしています..."))
         await install_comfyui(
             paths.comfyui_dir, rm.comfyui_zip_url, rm.comfyui_commit,
             paths.venv_dir, uv, paths.downloads_dir,
         )
 
         cn_manifest = self._load_custom_nodes_manifest()
-        _progress(SetupState.INSTALLING_CUSTOM_NODES, "custom nodesをインストールしています...")
+        _progress(SetupState.INSTALLING_CUSTOM_NODES, tr("custom nodesをインストールしています..."))
         await install_custom_nodes(paths.custom_nodes_dir, cn_manifest, paths.venv_dir, uv, paths.downloads_dir)
 
         await self._ensure_sage_attention_installed(on_progress)
@@ -193,12 +194,16 @@ class AppController:
         except DiskSpaceError:
             self._state.set_setup_state(SetupState.FAILED)
             raise
-        _progress(SetupState.DOWNLOADING_MODELS, "モデルをダウンロードしています（時間がかかります）...")
+        _progress(SetupState.DOWNLOADING_MODELS, tr("モデルをダウンロードしています（時間がかかります）..."))
 
         def _model_progress(name: str, done: int, total: int, file_idx: int = 0, total_files: int = 0) -> None:
             pct = done / total * 100 if total > 0 else 0
             if on_progress:
-                msg = f"モデルDL中 ({file_idx}/{total_files}): {name}" if total_files else f"モデルDL中: {name}"
+                msg = (
+                    tr("モデルDL中 ({file_idx}/{total_files}): {name}").format(
+                        file_idx=file_idx, total_files=total_files, name=name)
+                    if total_files else tr("モデルDL中: {name}").format(name=name)
+                )
                 on_progress(SetupProgress(
                     state=SetupState.DOWNLOADING_MODELS,
                     message=msg,
@@ -207,17 +212,17 @@ class AppController:
 
         await install_models(paths.runtime_root, model_manifest, presets=installed, progress_cb=_model_progress)
 
-        _progress(SetupState.VERIFYING_FILES, "ファイルを検証しています...")
+        _progress(SetupState.VERIFYING_FILES, tr("ファイルを検証しています..."))
         check_required_models_present(paths.runtime_root, model_manifest, presets=installed)
 
-        _progress(SetupState.BUILDING_WORKFLOW_TEMPLATE, "workflowを準備しています...")
+        _progress(SetupState.BUILDING_WORKFLOW_TEMPLATE, tr("workflowを準備しています..."))
         load_and_sanitize(
             paths.api_source_json(),
             paths.runtime_template_json(),
             paths.workflow_dir / "workflow_analysis_report.md",
         )
 
-        _progress(SetupState.VALIDATING_COMFYUI, "ComfyUIを検証しています...")
+        _progress(SetupState.VALIDATING_COMFYUI, tr("ComfyUIを検証しています..."))
         self._server = ComfyServerController(paths.python_exe, paths.comfyui_dir, paths.comfyui_log)
         self._server.start(extra_flags=self._vram_flags())
         from ..comfy.api_client import ComfyApiClient
@@ -230,7 +235,7 @@ class AppController:
             self._server.stop()
             raise MissingNodeError(missing)
 
-        _progress(SetupState.READY, "セットアップ完了！", pct=100.0)
+        _progress(SetupState.READY, tr("セットアップ完了！"), pct=100.0)
 
     def _vram_flags(self) -> list[str]:
         from ..constants import VRAM_MODE_FLAGS
@@ -294,7 +299,7 @@ class AppController:
         from ..constants import _VALID_PRESETS
         for preset in presets:
             if preset not in _VALID_PRESETS:
-                raise ValueError(f"不正なプリセット: {preset}")
+                raise ValueError(tr("不正なプリセット: {preset}").format(preset=preset))
 
         paths = self._paths
         model_manifest = self._load_model_manifest()
@@ -312,7 +317,8 @@ class AppController:
             )
             on_progress(SetupProgress(
                 state=SetupState.DOWNLOADING_MODELS,
-                message=f"モデルDL中 ({file_idx}/{total_files}): {name}",
+                message=tr("モデルDL中 ({file_idx}/{total_files}): {name}").format(
+                    file_idx=file_idx, total_files=total_files, name=name),
                 percent=file_pct,
                 overall_percent=overall_pct,
             ))

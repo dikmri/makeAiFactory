@@ -16,6 +16,7 @@ datas = [
     ('app/manifest', 'app/manifest'),
     ('app/workflow', 'app/workflow'),
     ('app/assets', 'app/assets'),
+    ('app/i18n', 'app/i18n'),
     # インターネット投入口 β の Web UI 静的ファイル (HTML / JS / CSS)
     ('src/makeaifactory/remote_room/static', 'makeaifactory/remote_room/static'),
 ]

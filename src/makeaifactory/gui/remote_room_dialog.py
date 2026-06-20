@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,7 +124,7 @@ class RemoteRoomDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("インターネット投入口 β")
+        self.setWindowTitle(tr("インターネット投入口 β"))
         self.setMinimumWidth(480)
         self.setStyleSheet(_STYLE)
         self._on_start_cb: Callable | None = None
@@ -157,19 +159,19 @@ class RemoteRoomDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # 説明
-        desc = QLabel(
+        desc = QLabel(tr(
             "一時URLを発行し、離れた場所にいる人がブラウザから画像を\n"
             "アップロードして動画生成できるようにします。\n"
             "Cloudflare Quick Tunnel を使用します（Cloudflareアカウント不要）。"
-        )
+        ))
         desc.setStyleSheet("font-size:12px;color:#888;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
         # 状態表示
-        status_box = QGroupBox("状態")
+        status_box = QGroupBox(tr("状態"))
         sb_layout = QVBoxLayout(status_box)
-        self._status_label = QLabel("● 停止中")
+        self._status_label = QLabel(tr("● 停止中"))
         self._status_label.setStyleSheet("font-size:14px;font-weight:bold;color:#666;")
         sb_layout.addWidget(self._status_label)
 
@@ -200,75 +202,75 @@ class RemoteRoomDialog(QDialog):
 
         # コピーボタン群
         copy_row = QHBoxLayout()
-        self._copy_url_btn = QPushButton("URL をコピー")
+        self._copy_url_btn = QPushButton(tr("URL をコピー"))
         self._copy_url_btn.clicked.connect(self._copy_url)
         self._copy_url_btn.setEnabled(False)
         copy_row.addWidget(self._copy_url_btn)
 
-        self._copy_both_btn = QPushButton("URL + PIN をコピー")
+        self._copy_both_btn = QPushButton(tr("URL + PIN をコピー"))
         self._copy_both_btn.clicked.connect(self._copy_both)
         self._copy_both_btn.setEnabled(False)
         copy_row.addWidget(self._copy_both_btn)
         layout.addLayout(copy_row)
 
         # 設定
-        config_box = QGroupBox("公開設定")
+        config_box = QGroupBox(tr("公開設定"))
         config_layout = QFormLayout(config_box)
         config_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self._ttl_combo = QComboBox()
-        for label, val in [("1時間", 60), ("3時間 (推奨)", 180), ("6時間", 360)]:
+        for label, val in [(tr("1時間"), 60), (tr("3時間 (推奨)"), 180), (tr("6時間"), 360)]:
             self._ttl_combo.addItem(label, val)
         self._ttl_combo.setCurrentIndex(1)
-        config_layout.addRow("有効期限:", self._ttl_combo)
+        config_layout.addRow(tr("有効期限:"), self._ttl_combo)
 
         self._pin_combo = QComboBox()
-        self._pin_combo.addItem("QR + PIN (推奨)", True)
-        self._pin_combo.addItem("QR のみ", False)
-        config_layout.addRow("認証:", self._pin_combo)
+        self._pin_combo.addItem(tr("QR + PIN (推奨)"), True)
+        self._pin_combo.addItem(tr("QR のみ"), False)
+        config_layout.addRow(tr("認証:"), self._pin_combo)
 
         self._queue_combo = QComboBox()
         for v in [1, 3, 5]:
-            self._queue_combo.addItem(str(v) + "件", v)
+            self._queue_combo.addItem(tr("{n}件").format(n=v), v)
         self._queue_combo.setCurrentIndex(1)
-        config_layout.addRow("最大待ち件数:", self._queue_combo)
+        config_layout.addRow(tr("最大待ち件数:"), self._queue_combo)
 
         self._cooldown_combo = QComboBox()
-        for label, val in [("5分", 300), ("10分 (推奨)", 600), ("30分", 1800)]:
+        for label, val in [(tr("5分"), 300), (tr("10分 (推奨)"), 600), (tr("30分"), 1800)]:
             self._cooldown_combo.addItem(label, val)
         self._cooldown_combo.setCurrentIndex(1)
-        config_layout.addRow("1人あたりの連投制限:", self._cooldown_combo)
+        config_layout.addRow(tr("1人あたりの連投制限:"), self._cooldown_combo)
 
         layout.addWidget(config_box)
 
         # 稼働状況
-        stats_box = QGroupBox("稼働状況")
+        stats_box = QGroupBox(tr("稼働状況"))
         stats_layout = QFormLayout(stats_box)
         stats_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self._stat_queued   = QLabel("0")
         self._stat_running  = QLabel("0")
         self._stat_completed = QLabel("0")
         self._stat_failed   = QLabel("0")
-        stats_layout.addRow("待機:", self._stat_queued)
-        stats_layout.addRow("生成中:", self._stat_running)
-        stats_layout.addRow("完了:", self._stat_completed)
-        stats_layout.addRow("失敗:", self._stat_failed)
+        stats_layout.addRow(tr("待機:"), self._stat_queued)
+        stats_layout.addRow(tr("生成中:"), self._stat_running)
+        stats_layout.addRow(tr("完了:"), self._stat_completed)
+        stats_layout.addRow(tr("失敗:"), self._stat_failed)
         layout.addWidget(stats_box)
 
         # 緊急操作
-        emg_box = QGroupBox("緊急操作")
+        emg_box = QGroupBox(tr("緊急操作"))
         emg_layout = QHBoxLayout(emg_box)
-        self._stop_accept_btn = QPushButton("受付停止")
+        self._stop_accept_btn = QPushButton(tr("受付停止"))
         self._stop_accept_btn.clicked.connect(self._on_stop_accepting)
         self._stop_accept_btn.setEnabled(False)
         emg_layout.addWidget(self._stop_accept_btn)
 
-        self._cancel_job_btn = QPushButton("生成を中断")
+        self._cancel_job_btn = QPushButton(tr("生成を中断"))
         self._cancel_job_btn.clicked.connect(self.cancel_job)
         self._cancel_job_btn.setEnabled(False)
         emg_layout.addWidget(self._cancel_job_btn)
 
-        self._clear_queue_btn = QPushButton("キューを消去")
+        self._clear_queue_btn = QPushButton(tr("キューを消去"))
         self._clear_queue_btn.clicked.connect(self._on_clear_queue)
         self._clear_queue_btn.setEnabled(False)
         emg_layout.addWidget(self._clear_queue_btn)
@@ -276,19 +278,19 @@ class RemoteRoomDialog(QDialog):
 
         # 起動・停止ボタン
         btn_row = QHBoxLayout()
-        self._start_btn = QPushButton("投入口を開始")
+        self._start_btn = QPushButton(tr("投入口を開始"))
         self._start_btn.setObjectName("startBtn")
         self._start_btn.clicked.connect(self._on_start_clicked)
         btn_row.addWidget(self._start_btn)
 
-        self._stop_btn = QPushButton("投入口を停止")
+        self._stop_btn = QPushButton(tr("投入口を停止"))
         self._stop_btn.setObjectName("stopBtn")
         self._stop_btn.clicked.connect(self._on_stop_clicked)
         self._stop_btn.setEnabled(False)
         btn_row.addWidget(self._stop_btn)
         layout.addLayout(btn_row)
 
-        close_btn = QPushButton("閉じる")
+        close_btn = QPushButton(tr("閉じる"))
         close_btn.clicked.connect(self.close)
         close_btn.setFixedWidth(100)
         outer_layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
@@ -349,7 +351,7 @@ class RemoteRoomDialog(QDialog):
         if pin:
             self._pin_label.setText(f"PIN: {pin}")
         else:
-            self._pin_label.setText("PIN: 不要")
+            self._pin_label.setText(tr("PIN: 不要"))
         self._copy_url_btn.setEnabled(True)
         self._copy_both_btn.setEnabled(bool(pin))
         self._generate_qr(url)
@@ -361,7 +363,7 @@ class RemoteRoomDialog(QDialog):
         self._stat_failed.setText(str(stats.get("failed", 0)))
 
     def show_error_msg(self, message: str) -> None:
-        QMessageBox.warning(self, "投入口エラー", message)
+        QMessageBox.warning(self, tr("投入口エラー"), message)
 
     # ── プライベートメソッド ────────────────────────────────────────────────────
 
@@ -379,8 +381,8 @@ class RemoteRoomDialog(QDialog):
 
     def _on_stop_clicked(self) -> None:
         if QMessageBox.question(
-            self, "投入口を停止",
-            "投入口を停止しますか？\n接続中のユーザーは切断され、URLは無効になります。",
+            self, tr("投入口を停止"),
+            tr("投入口を停止しますか？\n接続中のユーザーは切断され、URLは無効になります。"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes:
             if self._on_stop_cb:
@@ -392,8 +394,8 @@ class RemoteRoomDialog(QDialog):
 
     def _on_clear_queue(self) -> None:
         if QMessageBox.question(
-            self, "キューを消去",
-            "待機中のリクエストをすべてキャンセルしますか？",
+            self, tr("キューを消去"),
+            tr("待機中のリクエストをすべてキャンセルしますか？"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes:
             self.clear_queue.emit()
@@ -414,7 +416,7 @@ class RemoteRoomDialog(QDialog):
         if pixmap:
             self._qr_label.setPixmap(pixmap)
             self._qr_label.show()
-            hint = "📱 スキャンで入室 (PIN 自動入力)" if pin else "📱 スキャンして入室"
+            hint = tr("📱 スキャンで入室 (PIN 自動入力)") if pin else tr("📱 スキャンして入室")
             self._qr_hint_label.setText(hint)
             self._qr_hint_label.show()
         else:

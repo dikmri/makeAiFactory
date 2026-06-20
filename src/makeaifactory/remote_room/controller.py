@@ -27,6 +27,7 @@ from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
+from ..i18n import tr
 from .auth import AuthManager
 from .rate_limiter import RateLimiter
 from .room_config import RemoteRoomConfig
@@ -159,7 +160,7 @@ class RemoteRoomController:
         except Exception as e:
             if self._running:
                 logger.exception("RemoteRoom 予期しないエラー")
-                self._signals.status_changed.emit("error", f"エラー: {e}")
+                self._signals.status_changed.emit("error", tr("エラー: {e}").format(e=e))
                 self._signals.error.emit(str(e))
         finally:
             self._running = False
@@ -174,7 +175,7 @@ class RemoteRoomController:
         self._stop_event = asyncio.Event()
         self._job_queue = asyncio.Queue(maxsize=config.max_queue_size * 2)
 
-        self._signals.status_changed.emit("starting", "起動中...")
+        self._signals.status_changed.emit("starting", tr("起動中..."))
 
         # ポートを確保
         port = config.local_port or find_free_port(config.local_host)
@@ -197,11 +198,11 @@ class RemoteRoomController:
         try:
             import aiohttp  # noqa: F401 — early availability check
         except ImportError:
-            self._signals.status_changed.emit("error", "エラー: aiohttp が未インストールです")
-            self._signals.error.emit(
+            self._signals.status_changed.emit("error", tr("エラー: aiohttp が未インストールです"))
+            self._signals.error.emit(tr(
                 "aiohttp がインストールされていません。\n"
                 "pip install aiohttp を実行してください。"
-            )
+            ))
             return
 
         import sys
@@ -229,8 +230,8 @@ class RemoteRoomController:
         try:
             await server.start(config.local_host, port)
         except Exception as e:
-            self._signals.status_changed.emit("error", f"サーバー起動失敗: {e}")
-            self._signals.error.emit(f"ローカルサーバーの起動に失敗しました:\n{e}")
+            self._signals.status_changed.emit("error", tr("サーバー起動失敗: {e}").format(e=e))
+            self._signals.error.emit(tr("ローカルサーバーの起動に失敗しました:\n{e}").format(e=e))
             return
 
         # cloudflared バイナリを確保 (なければ自動ダウンロード)
@@ -242,12 +243,12 @@ class RemoteRoomController:
         try:
             cloudflared_exe = await ensure_cloudflared(self._paths.runtime_root, _dl_progress)
         except Exception as e:
-            self._signals.status_changed.emit("error", f"cloudflared 取得失敗: {e}")
+            self._signals.status_changed.emit("error", tr("cloudflared 取得失敗: {e}").format(e=e))
             self._signals.error.emit(str(e))
             await server.stop()
             return
 
-        self._signals.status_changed.emit("starting", "トンネルを起動中...")
+        self._signals.status_changed.emit("starting", tr("トンネルを起動中..."))
 
         # Tunnel
         tunnel = TunnelManager()
@@ -255,19 +256,19 @@ class RemoteRoomController:
         try:
             public_url = await tunnel.start(port, exe_path=cloudflared_exe)
             self._signals.public_url_ready.emit(public_url, self._pin)
-            self._signals.status_changed.emit("running", f"公開中: {public_url}")
+            self._signals.status_changed.emit("running", tr("公開中: {public_url}").format(public_url=public_url))
             logger.info("投入口 公開: %s (PIN: %s)", public_url, "あり" if self._pin else "なし")
         except asyncio.TimeoutError:
-            err = (
+            err = tr(
                 "Cloudflare Quick Tunnel の起動に失敗しました。\n"
                 "ネットワーク接続、セキュリティソフト、会社/学校のネットワーク制限を確認してください。"
             )
-            self._signals.status_changed.emit("error", "Tunnel 起動タイムアウト")
+            self._signals.status_changed.emit("error", tr("Tunnel 起動タイムアウト"))
             self._signals.error.emit(err)
             await server.stop()
             return
         except Exception as e:
-            self._signals.status_changed.emit("error", f"Tunnel エラー: {e}")
+            self._signals.status_changed.emit("error", tr("Tunnel エラー: {e}").format(e=e))
             self._signals.error.emit(str(e))
             await server.stop()
             return
@@ -289,7 +290,7 @@ class RemoteRoomController:
 
         # 出力ファイルの保持期間を考慮 (入力画像のみ即時削除)
         self._cleanup_inputs()
-        self._signals.status_changed.emit("stopped", "停止しました")
+        self._signals.status_changed.emit("stopped", tr("停止しました"))
 
     # ── ジョブワーカーループ ───────────────────────────────────────────────────
 
@@ -392,12 +393,12 @@ class RemoteRoomController:
         self._current_comfy_client = client
 
         try:
-            on_progress(0.0, "ComfyUI 接続中...")
+            on_progress(0.0, tr("ComfyUI 接続中..."))
             await client.wait_until_ready(timeout_sec=30)
 
             upload_src = job_dir / f"remote_{job.job_id}.png"
             shutil.copy2(job.image_path, upload_src)
-            on_progress(5.0, "画像アップロード中...")
+            on_progress(5.0, tr("画像アップロード中..."))
             uploaded_name = await client.upload_image(upload_src)
 
             seed = random.randint(0, 2**32 - 1)
@@ -412,21 +413,21 @@ class RemoteRoomController:
             )
             patched = patch_workflow(template, ctx)
 
-            on_progress(8.0, "生成キュー追加中...")
+            on_progress(8.0, tr("生成キュー追加中..."))
             prompt_id = await client.queue_prompt(patched)
             logger.info("RemoteRoom 生成開始: job=%s prompt=%s", job.job_id, prompt_id)
 
-            on_progress(10.0, "生成中...")
+            on_progress(10.0, tr("生成中..."))
             stage_estimator = StageProgressEstimator(count_progress_stages(template))
             async for event in client.watch_progress(prompt_id):
                 if event.event_type == "progress" and event.max_steps > 0:
                     stage_pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
                     pct = 10.0 + stage_pct * 0.80
-                    on_progress(pct, f"生成中... {int(pct)}%")
+                    on_progress(pct, tr("生成中... {pct}%").format(pct=int(pct)))
                 elif event.event_type == "execution_error":
                     break
 
-            on_progress(92.0, "動画を保存中...")
+            on_progress(92.0, tr("動画を保存中..."))
             history = await client.get_history(prompt_id)
             output_mp4 = resolve_output_mp4(history, prompt_id, self._paths.comfyui_output_dir, job.job_id)
 
@@ -441,7 +442,7 @@ class RemoteRoomController:
                     "completed_at": datetime.now().isoformat(),
                 }, f, ensure_ascii=False, indent=2)
 
-            on_progress(100.0, "完了")
+            on_progress(100.0, tr("完了"))
             return final_output
         finally:
             self._current_comfy_client = None
@@ -452,7 +453,7 @@ class RemoteRoomController:
         await asyncio.sleep(ttl_minutes * 60)
         logger.info("ルーム有効期限切れ — 停止します")
         self._accepting[0] = False
-        self._signals.status_changed.emit("stopped", "有効期限切れで停止しました")
+        self._signals.status_changed.emit("stopped", tr("有効期限切れで停止しました"))
         if self._stop_event:
             self._stop_event.set()
 

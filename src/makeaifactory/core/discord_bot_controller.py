@@ -25,6 +25,7 @@ from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state, write_bot_state
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
+from ..i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,9 @@ class DiscordBotSignals(QObject):
     job_done      = Signal(str)        # output_mp4_path
     job_cancelled = Signal()
     job_error     = Signal(str)        # error_message
-    status_changed = Signal(str)       # "接続中..." | "接続完了: BotName" | "停止" | "エラー: ..."
+    # status_code ("connecting"|"connected"|"stopped"|"error"|"reconnecting"), 表示用テキスト(翻訳済み)
+    # status_code は表示色の判定に使う。テキストの言語に依存させないための分離。
+    status_changed = Signal(str, str)
 
 
 class DiscordBotController:
@@ -140,7 +143,7 @@ class DiscordBotController:
         try:
             import discord as _dc  # noqa: F401 — early check
         except ImportError:
-            self._signals.status_changed.emit("エラー: discord.py がインストールされていません")
+            self._signals.status_changed.emit("error", tr("エラー: discord.py がインストールされていません"))
             logger.error("discord.py がインストールされていません")
             return
 
@@ -156,7 +159,7 @@ class DiscordBotController:
             asyncio.run_coroutine_threadsafe(self._current_comfy_client.interrupt(), self._loop)
         if self._loop and self._discord_client is not None:
             asyncio.run_coroutine_threadsafe(self._discord_client.close(), self._loop)
-        self._signals.status_changed.emit("停止")
+        self._signals.status_changed.emit("stopped", tr("停止"))
         logger.info("Discord Bot 停止要求")
 
     def cancel_current_job(self) -> None:
@@ -176,7 +179,7 @@ class DiscordBotController:
         except Exception as e:
             if self._running:
                 logger.exception("Discord Bot 予期しないエラー")
-                self._signals.status_changed.emit(f"エラー: {e}")
+                self._signals.status_changed.emit("error", tr("エラー: {e}").format(e=e))
         finally:
             self._running = False
             self._loop.close()
@@ -195,9 +198,8 @@ class DiscordBotController:
         @self._discord_client.event
         async def on_ready() -> None:
             user = self._discord_client.user
-            status = f"接続完了: {user}"
             logger.info("Discord Bot 起動: %s", user)
-            self._signals.status_changed.emit(status)
+            self._signals.status_changed.emit("connected", tr("接続完了: {user}").format(user=user))
             # bot_state.json を更新して「アイドル状態・準備完了」を記録する
             write_bot_state(self._paths.runtime_root, "idle")
 
@@ -205,21 +207,21 @@ class DiscordBotController:
         async def on_disconnect() -> None:
             if self._running:
                 logger.warning("Discord Bot 切断")
-                self._signals.status_changed.emit("切断 (再接続中...)")
+                self._signals.status_changed.emit("reconnecting", tr("切断 (再接続中...)"))
 
         @self._discord_client.event
         async def on_resumed() -> None:
             # セッション再開（Resume）時は on_ready が発火しないため個別に処理する
             user = self._discord_client.user
             logger.info("Discord Bot セッション再開: %s", user)
-            self._signals.status_changed.emit(f"接続完了: {user}")
+            self._signals.status_changed.emit("connected", tr("接続完了: {user}").format(user=user))
             write_bot_state(self._paths.runtime_root, "idle")
 
         @self._discord_client.event
         async def on_message(message) -> None:
             await self._handle_message(message)
 
-        self._signals.status_changed.emit("接続中...")
+        self._signals.status_changed.emit("connecting", tr("接続中..."))
         worker_task = asyncio.create_task(self._worker())
         state_task = asyncio.create_task(self._keep_state_alive())
         try:
@@ -227,10 +229,10 @@ class DiscordBotController:
         except Exception as e:
             import discord as dc
             if isinstance(e, dc.LoginFailure):
-                self._signals.status_changed.emit("エラー: トークンが無効です")
+                self._signals.status_changed.emit("error", tr("エラー: トークンが無効です"))
                 logger.error("Discord ログイン失敗: %s", e)
             elif self._running:
-                self._signals.status_changed.emit(f"エラー: {e}")
+                self._signals.status_changed.emit("error", tr("エラー: {e}").format(e=e))
                 logger.error("Discord Bot エラー: %s", e)
         finally:
             worker_task.cancel()
@@ -452,14 +454,14 @@ class DiscordBotController:
             prompt_id = await client.queue_prompt(patched)
             logger.info("生成開始: job=%s prompt=%s", job_id, prompt_id)
 
-            self._signals.job_progress.emit(0.0, "生成中...")
+            self._signals.job_progress.emit(0.0, tr("生成中..."))
             stage_estimator = StageProgressEstimator(count_progress_stages(template))
             async for event in client.watch_progress(prompt_id):
                 if on_started is not None and event.event_type == "execution_start":
                     on_started()
                 if event.event_type == "progress" and event.max_steps > 0:
                     pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
-                    self._signals.job_progress.emit(pct, f"生成中... {int(pct)}%")
+                    self._signals.job_progress.emit(pct, tr("生成中... {pct}%").format(pct=int(pct)))
 
             if self._cancel_requested.is_set():
                 raise _CancelledError()

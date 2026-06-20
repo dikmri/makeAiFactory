@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from ..comfy.workflow_patcher import DevModeOverrides
 from ..constants import SUPPORTED_IMAGE_EXTENSIONS
 from ..domain.progress import JobProgress, JobState
+from ..i18n import tr
 from .dev_widgets import (
     CollapseSection,
     FaderWidget,
@@ -117,7 +118,7 @@ class _ImageDropArea(QLabel):
         self._reset()
 
     def _reset(self) -> None:
-        self.setText("入力画像をここにドロップ\nまたはクリックして選択")
+        self.setText(tr("入力画像をここにドロップ\nまたはクリックして選択"))
         self.setStyleSheet(self._CSS_IDLE)
         self.setPixmap(QPixmap())
 
@@ -138,9 +139,9 @@ class _ImageDropArea(QLabel):
     def mousePressEvent(self, event) -> None:  # noqa: N802
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "入力画像を選択",
+            tr("入力画像を選択"),
             "",
-            "画像ファイル (*.png *.jpg *.jpeg *.webp)",
+            tr("画像ファイル (*.png *.jpg *.jpeg *.webp)"),
         )
         if path:
             self.image_selected.emit(Path(path))
@@ -189,7 +190,7 @@ class DevModeDialog(QDialog):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("開発モード — makeAiFactory")
+        self.setWindowTitle(tr("開発モード — makeAiFactory"))
         self.setMinimumSize(1100, 720)
         self.resize(1200, 800)
         self.setModal(False)
@@ -321,14 +322,14 @@ class DevModeDialog(QDialog):
         right_lay.setSpacing(12)
 
         # 入力画像ドロップエリア
-        right_lay.addWidget(SectionHeader("入力画像"))
+        right_lay.addWidget(SectionHeader(tr("入力画像")))
         self._drop_area = _ImageDropArea()
         self._drop_area.image_selected.connect(self._on_image_selected)
         right_lay.addWidget(self._drop_area, stretch=3)
 
         # 出力プレビュー
-        right_lay.addWidget(SectionHeader("生成結果"))
-        self._result_lbl = QLabel("生成すると動画パスが表示されます")
+        right_lay.addWidget(SectionHeader(tr("生成結果")))
+        self._result_lbl = QLabel(tr("生成すると動画パスが表示されます"))
         self._result_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._result_lbl.setWordWrap(True)
         self._result_lbl.setStyleSheet(
@@ -338,7 +339,7 @@ class DevModeDialog(QDialog):
         self._result_lbl.setMinimumHeight(60)
         right_lay.addWidget(self._result_lbl)
 
-        self._open_btn = QPushButton("フォルダで開く")
+        self._open_btn = QPushButton(tr("フォルダで開く"))
         self._open_btn.setVisible(False)
         self._open_btn.setStyleSheet(self._btn_css("#1a3050", _ACCENT))
         right_lay.addWidget(self._open_btn)
@@ -346,7 +347,7 @@ class DevModeDialog(QDialog):
         right_lay.addWidget(Separator())
 
         # ステータス
-        self._status_lbl = QLabel("画像をドロップして生成を開始")
+        self._status_lbl = QLabel(tr("画像をドロップして生成を開始"))
         self._status_lbl.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
         right_lay.addWidget(self._status_lbl)
 
@@ -361,13 +362,13 @@ class DevModeDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
 
-        self._gen_btn = QPushButton("⚡  生成開始")
+        self._gen_btn = QPushButton(tr("⚡  生成開始"))
         self._gen_btn.setFixedHeight(44)
         self._gen_btn.setStyleSheet(self._btn_css("#0d3050", _ACCENT, font_size=14))
         self._gen_btn.clicked.connect(self._on_generate)
         btn_row.addWidget(self._gen_btn, stretch=2)
 
-        self._cancel_btn = QPushButton("キャンセル")
+        self._cancel_btn = QPushButton(tr("キャンセル"))
         self._cancel_btn.setFixedHeight(44)
         self._cancel_btn.setVisible(False)
         self._cancel_btn.setStyleSheet(self._btn_css("#300d0d", "#f88"))
@@ -378,15 +379,15 @@ class DevModeDialog(QDialog):
         root.addWidget(right, stretch=1)
 
     def _build_workflow_json_link(self, lay: QVBoxLayout) -> None:
-        desc = QLabel(
+        desc = QLabel(tr(
             "画像をドロップして動画化するとき、裏側では実際にこのComfyUIワークフローが"
             "使われています。下のボタンからノードごとの値をつまみ・入力欄で直接調整できます。"
-        )
+        ))
         desc.setWordWrap(True)
         desc.setStyleSheet(f"color: {_DIM}; font-size: 11px;")
         lay.addWidget(desc)
 
-        btn = QPushButton("🎛  ワークフローの全パラメーターを調整 (makeAiFactory_api_source.json)")
+        btn = QPushButton(tr("🎛  ワークフローの全パラメーターを調整 (makeAiFactory_api_source.json)"))
         btn.setStyleSheet(self._btn_css("#0d3050", _ACCENT, font_size=12))
         btn.clicked.connect(self._on_open_workflow_json)
         btn.setEnabled(bool(self._workflow_json_text and self._apply_workflow_json_fn))
@@ -411,7 +412,7 @@ class DevModeDialog(QDialog):
         lay.addWidget(lbl_p)
         self._positive_edit = QPlainTextEdit()
         self._positive_edit.setFixedHeight(90)
-        self._positive_edit.setPlaceholderText("生成内容の説明（英語推奨）")
+        self._positive_edit.setPlaceholderText(tr("生成内容の説明（英語推奨）"))
         lay.addWidget(self._positive_edit)
 
         lbl_n = QLabel("Negative")
@@ -419,7 +420,7 @@ class DevModeDialog(QDialog):
         lay.addWidget(lbl_n)
         self._negative_edit = QPlainTextEdit()
         self._negative_edit.setFixedHeight(56)
-        self._negative_edit.setPlaceholderText("除外したい要素（省略可）")
+        self._negative_edit.setPlaceholderText(tr("除外したい要素（省略可）"))
         lay.addWidget(self._negative_edit)
 
     def _build_quality(self, lay: QVBoxLayout) -> None:
@@ -446,7 +447,7 @@ class DevModeDialog(QDialog):
         lay.addWidget(SectionHeader("VIDEO SETTINGS"))
 
         self._len_fader = FaderWidget(
-            "動画の長さ", 1, 30, 5, decimals=0, step=1, unit=" 秒",
+            tr("動画の長さ"), 1, 30, 5, decimals=0, step=1, unit=" " + tr("秒"),
         )
         lay.addWidget(self._len_fader)
 
@@ -456,12 +457,12 @@ class DevModeDialog(QDialog):
         lay.addWidget(self._fps_fader)
 
         self._upscale_fader = FaderWidget(
-            "アップスケール", 1, 4, 2, decimals=0, step=1, unit=" ×",
+            tr("アップスケール"), 1, 4, 2, decimals=0, step=1, unit=" ×",
         )
         lay.addWidget(self._upscale_fader)
 
         self._crf_fader = FaderWidget(
-            "品質 CRF (低いほど高品質)", 0, 51, 19, decimals=0, step=1,
+            tr("品質 CRF (低いほど高品質)"), 0, 51, 19, decimals=0, step=1,
         )
         lay.addWidget(self._crf_fader)
 
@@ -469,7 +470,7 @@ class DevModeDialog(QDialog):
         lay.addWidget(SectionHeader("RESOLUTION & SEED"))
 
         res_row = QHBoxLayout()
-        res_lbl = QLabel("解像度")
+        res_lbl = QLabel(tr("解像度"))
         res_lbl.setStyleSheet(f"color: {_DIM}; font-size: 12px;")
         res_lbl.setFixedWidth(140)
         res_row.addWidget(res_lbl)
@@ -479,7 +480,7 @@ class DevModeDialog(QDialog):
         lay.addLayout(res_row)
 
         seed_row = QHBoxLayout()
-        seed_lbl = QLabel("シード")
+        seed_lbl = QLabel(tr("シード"))
         seed_lbl.setStyleSheet(f"color: {_DIM}; font-size: 12px;")
         seed_lbl.setFixedWidth(140)
         seed_row.addWidget(seed_lbl)
@@ -489,7 +490,7 @@ class DevModeDialog(QDialog):
         self._seed_spin.setValue(random.randint(0, 2_147_483_647))
         seed_row.addWidget(self._seed_spin, stretch=1)
 
-        self._rand_cb = QCheckBox("ランダム")
+        self._rand_cb = QCheckBox(tr("ランダム"))
         self._rand_cb.setChecked(True)
         self._rand_cb.toggled.connect(self._seed_spin.setDisabled)
         self._seed_spin.setDisabled(True)
@@ -509,14 +510,14 @@ class DevModeDialog(QDialog):
     def _build_lora(self, lay: QVBoxLayout) -> None:
         lay.addWidget(SectionHeader("LORA"))
 
-        self._lora_high_list = LoraListWidget("High ノイズ段")
+        self._lora_high_list = LoraListWidget(tr("High ノイズ段"))
         lay.addWidget(self._lora_high_list)
 
-        self._lora_low_list = LoraListWidget("Low ノイズ段")
+        self._lora_low_list = LoraListWidget(tr("Low ノイズ段"))
         lay.addWidget(self._lora_low_list)
 
     def _build_advanced(self, lay: QVBoxLayout) -> None:
-        adv = CollapseSection("上級設定 ADVANCED")
+        adv = CollapseSection(tr("上級設定 ADVANCED"))
 
         # Sage Attention
         sage_row = QHBoxLayout()
@@ -539,11 +540,11 @@ class DevModeDialog(QDialog):
 
         # lightx2v 強度 (High/Low 個別)
         self._lightx2v_high_fader = FaderWidget(
-            "lightx2v 強度 (High)", 0.0, 2.0, 1.0, decimals=2, step=0.01,
+            tr("lightx2v 強度 (High)"), 0.0, 2.0, 1.0, decimals=2, step=0.01,
         )
         adv.add_widget(self._lightx2v_high_fader)
         self._lightx2v_low_fader = FaderWidget(
-            "lightx2v 強度 (Low)", 0.0, 2.0, 1.0, decimals=2, step=0.01,
+            tr("lightx2v 強度 (Low)"), 0.0, 2.0, 1.0, decimals=2, step=0.01,
         )
         adv.add_widget(self._lightx2v_low_fader)
 
@@ -643,7 +644,7 @@ class DevModeDialog(QDialog):
     def _on_image_selected(self, path: Path) -> None:
         self._input_image = path
         self._drop_area.set_image(path)
-        self._status_lbl.setText(f"入力: {path.name}")
+        self._status_lbl.setText(tr("入力: {name}").format(name=path.name))
         self._status_lbl.setStyleSheet(f"color: {_ACCENT}; font-size: 11px;")
 
     # ── 生成コントロール ─────────────────────────────────────────────────────
@@ -653,7 +654,7 @@ class DevModeDialog(QDialog):
         if self._generating:
             return
         if self._input_image is None:
-            self._status_lbl.setText("画像を選択してください")
+            self._status_lbl.setText(tr("画像を選択してください"))
             self._status_lbl.setStyleSheet("color: #f88; font-size: 11px;")
             return
 
@@ -667,7 +668,7 @@ class DevModeDialog(QDialog):
         self._cancel_btn.setVisible(True)
         self._progress_bar.setVisible(True)
         self._progress_bar.setValue(0)
-        self._result_lbl.setText("生成中...")
+        self._result_lbl.setText(tr("生成中..."))
         self._open_btn.setVisible(False)
         self._status_lbl.setStyleSheet(f"color: {_ACCENT}; font-size: 11px;")
 
@@ -700,7 +701,7 @@ class DevModeDialog(QDialog):
         else:
             pct = state_pct.get(p.state, 0)
         self._progress_bar.setValue(pct)
-        self._status_lbl.setText(p.message or "生成中...")
+        self._status_lbl.setText(p.message or tr("生成中..."))
 
     @Slot(str)
     def _on_done(self, output_path: str) -> None:
@@ -708,7 +709,7 @@ class DevModeDialog(QDialog):
         self._gen_btn.setEnabled(True)
         self._cancel_btn.setVisible(False)
         self._progress_bar.setValue(100)
-        self._status_lbl.setText("生成完了！")
+        self._status_lbl.setText(tr("生成完了！"))
         self._status_lbl.setStyleSheet(f"color: #66bb6a; font-size: 11px;")
         self._result_lbl.setText(output_path)
         self._result_lbl.setStyleSheet(
@@ -725,7 +726,7 @@ class DevModeDialog(QDialog):
         self._gen_btn.setEnabled(True)
         self._cancel_btn.setVisible(False)
         self._progress_bar.setValue(0)
-        self._status_lbl.setText(f"エラー: {msg}")
+        self._status_lbl.setText(tr("エラー: {msg}").format(msg=msg))
         self._status_lbl.setStyleSheet("color: #f88; font-size: 11px;")
 
     # ── LoRA 選択肢 ───────────────────────────────────────────────────────────

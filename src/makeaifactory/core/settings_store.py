@@ -7,6 +7,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _DEFAULTS = {
+    "language": "",                # "" = 未設定(初回起動時にOS言語から自動検出)
     "seed_randomize": False,
     "save_base_video": False,
     "developer_mode": False,
@@ -66,6 +67,13 @@ class SettingsStore:
     def set(self, key: str, value) -> None:
         self._data[key] = value
         self._save()
+
+    @property
+    def language(self) -> str:
+        return str(self.get("language") or "")
+
+    def set_language(self, lang: str) -> None:
+        self.set("language", lang)
 
     @property
     def seed_randomize(self) -> bool:

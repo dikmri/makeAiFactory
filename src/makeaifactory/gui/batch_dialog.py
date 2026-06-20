@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
+
 
 class BatchDialog(QDialog):
     """入力フォルダと出力フォルダを指定するバッチ処理ダイアログ。"""
@@ -26,7 +28,7 @@ class BatchDialog(QDialog):
         default_output: str = "",
     ):
         super().__init__(parent)
-        self.setWindowTitle("フォルダを一括生成")
+        self.setWindowTitle(tr("フォルダを一括生成"))
         self.setMinimumWidth(480)
         self._setup_ui(default_input, default_output)
 
@@ -34,10 +36,10 @@ class BatchDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
 
-        desc = QLabel(
+        desc = QLabel(tr(
             "フォルダ内の画像を順番に動画生成します。\n"
             "処理済み画像は入力フォルダ内の「end」フォルダに移動されます。"
-        )
+        ))
         desc.setStyleSheet("color: #aaa; font-size: 13px;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
@@ -46,18 +48,18 @@ class BatchDialog(QDialog):
         form.setSpacing(10)
 
         self._input_edit = QLineEdit()
-        self._input_edit.setPlaceholderText("画像が入っているフォルダ")
+        self._input_edit.setPlaceholderText(tr("画像が入っているフォルダ"))
         self._input_edit.setText(default_input)
         self._input_edit.textChanged.connect(self._validate)
         input_row = self._make_row(self._input_edit, self._browse_input)
-        form.addRow("入力フォルダ:", input_row)
+        form.addRow(tr("入力フォルダ:"), input_row)
 
         self._output_edit = QLineEdit()
-        self._output_edit.setPlaceholderText("動画の保存先フォルダ")
+        self._output_edit.setPlaceholderText(tr("動画の保存先フォルダ"))
         self._output_edit.setText(default_output)
         self._output_edit.textChanged.connect(self._validate)
         output_row = self._make_row(self._output_edit, self._browse_output)
-        form.addRow("出力フォルダ:", output_row)
+        form.addRow(tr("出力フォルダ:"), output_row)
 
         layout.addLayout(form)
 
@@ -68,7 +70,7 @@ class BatchDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("開始")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("開始"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self._ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
@@ -81,19 +83,19 @@ class BatchDialog(QDialog):
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(6)
         h.addWidget(edit)
-        btn = QPushButton("参照...")
+        btn = QPushButton(tr("参照..."))
         btn.setFixedWidth(64)
         btn.clicked.connect(browse_fn)
         h.addWidget(btn)
         return row
 
     def _browse_input(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "入力フォルダを選択", self._input_edit.text().strip())
+        d = QFileDialog.getExistingDirectory(self, tr("入力フォルダを選択"), self._input_edit.text().strip())
         if d:
             self._input_edit.setText(d)
 
     def _browse_output(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "出力フォルダを選択", self._output_edit.text().strip())
+        d = QFileDialog.getExistingDirectory(self, tr("出力フォルダを選択"), self._output_edit.text().strip())
         if d:
             self._output_edit.setText(d)
 
@@ -106,7 +108,7 @@ class BatchDialog(QDialog):
             return
         in_path = Path(in_text)
         if not in_path.is_dir():
-            self._status_label.setText("入力フォルダが見つかりません")
+            self._status_label.setText(tr("入力フォルダが見つかりません"))
             self._ok_btn.setEnabled(False)
             return
         self._status_label.setText("")

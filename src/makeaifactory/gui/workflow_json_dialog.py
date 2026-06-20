@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
 from .dev_widgets import CollapseSection
 
 logger = logging.getLogger(__name__)
@@ -176,7 +177,7 @@ class WorkflowJsonDialog(QDialog):
         self._apply_fn = apply_fn
         self._panels: list[_NodePanel] = []
 
-        self.setWindowTitle("ワークフローパラメーター — makeAiFactory_api_source.json")
+        self.setWindowTitle(tr("ワークフローパラメーター — makeAiFactory_api_source.json"))
         self.setMinimumSize(900, 700)
         self.setStyleSheet(f"""
             QDialog, QWidget {{ background: {_BG}; color: {_TEXT}; }}
@@ -200,17 +201,17 @@ class WorkflowJsonDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        desc = QLabel(
+        desc = QLabel(tr(
             "画像をドロップして動画化するとき、裏側では実際にこのComfyUIワークフローが"
             "そのまま使われています。各ノードを開いて値を直接調整し、「保存して適用」すると"
             "次回の生成から反映されます。(makeAiFactory_api_source.json)"
-        )
+        ))
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #aaa; font-size: 12px;")
         layout.addWidget(desc)
 
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("ノードID・class_type・タイトルで絞り込み...")
+        self._search_edit.setPlaceholderText(tr("ノードID・class_type・タイトルで絞り込み..."))
         self._search_edit.textChanged.connect(self._on_search_changed)
         layout.addWidget(self._search_edit)
 
@@ -250,7 +251,7 @@ class WorkflowJsonDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        apply_btn = QPushButton("保存して適用")
+        apply_btn = QPushButton(tr("保存して適用"))
         apply_btn.setStyleSheet(f"""
             QPushButton {{
                 background: #0d3050; color: {_ACCENT};
@@ -261,7 +262,7 @@ class WorkflowJsonDialog(QDialog):
         """)
         apply_btn.clicked.connect(self._on_apply)
         btn_row.addWidget(apply_btn)
-        close_btn = QPushButton("閉じる")
+        close_btn = QPushButton(tr("閉じる"))
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
@@ -289,7 +290,7 @@ class WorkflowJsonDialog(QDialog):
             return
         self._workflow = merged
         self._status_lbl.setStyleSheet("color: #66bb6a; font-size: 12px;")
-        self._status_lbl.setText("保存しました。次回の生成から反映されます。")
+        self._status_lbl.setText(tr("保存しました。次回の生成から反映されます。"))
 
 
 def _sort_key(node_id: str) -> tuple[int, str]:

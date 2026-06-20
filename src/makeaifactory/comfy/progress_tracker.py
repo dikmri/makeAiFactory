@@ -4,6 +4,7 @@ import logging
 from typing import Callable
 
 from ..domain.progress import ComfyProgressEvent, JobProgress, JobState
+from ..i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def build_node_labels(template: dict) -> dict[str, str]:
         class_type = node_data.get("class_type", "")
         msg = _CLASS_TYPE_MESSAGES.get(class_type)
         if msg:
-            labels[str(node_id)] = msg
+            labels[str(node_id)] = tr(msg)
     return labels
 
 
@@ -114,25 +115,25 @@ class ProgressTracker:
 
         if etype == "execution_start":
             self._progress.state = JobState.GENERATING
-            self._progress.message = "生成を開始しています..."
+            self._progress.message = tr("生成を開始しています...")
 
         elif etype == "executing":
             node_id = event.node_id
             if node_id:
-                label = self._node_labels.get(node_id, f"ノード {node_id} を処理中...")
+                label = self._node_labels.get(node_id, tr("ノード {node_id} を処理中...").format(node_id=node_id))
                 self._progress.message = label
             else:
-                self._progress.message = "生成中..."
+                self._progress.message = tr("生成中...")
 
         elif etype == "progress":
             pct = self._stage_estimator.update(event.node_id, event.step, event.max_steps)
             self._progress.step = round(pct * 100)
             self._progress.total_steps = 10_000
-            self._progress.message = f"Wan2.2 動画生成中... {pct:.0f}%"
+            self._progress.message = tr("Wan2.2 動画生成中... {pct:.0f}%").format(pct=pct)
 
         elif etype == "execution_error":
             self._progress.state = JobState.FAILED
-            self._progress.message = "生成エラー"
+            self._progress.message = tr("生成エラー")
 
         else:
             # executed / execution_cached などはコールバックを呼ばない

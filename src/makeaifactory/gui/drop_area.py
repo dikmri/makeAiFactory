@@ -9,6 +9,7 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QLabel, QWidget
 
 from ..constants import SUPPORTED_IMAGE_EXTENSIONS
+from ..i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +44,16 @@ class DropArea(QLabel):
         self._set_idle_state()
 
     def _set_idle_state(self) -> None:
-        self.setText(
+        self.setText(tr(
             "画像をここにドロップ\n"
             "または Ctrl+V で貼り付け\n\n"
             "PNG / JPG / JPEG / WEBP\n\n"
             "初回のみセットアップが実行されます"
-        )
+        ))
         self.setStyleSheet(self._STYLE_IDLE)
 
     def set_busy(self) -> None:
-        self.setText("生成中...")
+        self.setText(tr("生成中..."))
         self.setStyleSheet(self._STYLE_IDLE)
         self.setAcceptDrops(False)
 

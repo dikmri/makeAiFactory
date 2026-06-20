@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 from ..domain.errors import SetupError
+from ..i18n import tr
 from .downloader import download_file
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,8 @@ def _run_uv(
     )
     if result.returncode != 0:
         logger.error("uv失敗 stderr: %s", result.stderr[-2000:])
-        raise SetupError(f"uv実行失敗: {' '.join(args[:3])}\n{result.stderr[-500:]}")
+        raise SetupError(tr("uv実行失敗: {cmd}\n{stderr}").format(
+            cmd=" ".join(args[:3]), stderr=result.stderr[-500:]))
     logger.debug("uv stdout: %s", result.stdout[-1000:])
     if result.stderr:
         logger.debug("uv stderr: %s", result.stderr[-500:])

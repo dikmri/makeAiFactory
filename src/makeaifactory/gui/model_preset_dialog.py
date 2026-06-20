@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import MODEL_PRESETS
+from ..i18n import tr
 
 _BAR_BLUE = """
     QProgressBar {
@@ -54,7 +55,7 @@ class ModelPresetDialog(QDialog):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("プリセットを追加インストール")
+        self.setWindowTitle(tr("プリセットを追加インストール"))
         self.setMinimumWidth(480)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
 
@@ -63,7 +64,7 @@ class ModelPresetDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
 
-        title = QLabel("追加するプリセットを選択してください")
+        title = QLabel(tr("追加するプリセットを選択してください"))
         title.setStyleSheet("font-size: 15px; font-weight: bold; color: #4fc3f7;")
         layout.addWidget(title)
 
@@ -71,19 +72,19 @@ class ModelPresetDialog(QDialog):
         uninstalled = [k for k in MODEL_PRESETS if k not in installed_presets]
 
         if not uninstalled:
-            layout.addWidget(QLabel("すべてのプリセットはインストール済みです。"))
+            layout.addWidget(QLabel(tr("すべてのプリセットはインストール済みです。")))
         else:
             for key in uninstalled:
                 info = MODEL_PRESETS[key]
                 dl_bytes = estimate_download_bytes(runtime_root, manifest, [key])
-                dl_str = _fmt_gb(dl_bytes) if dl_bytes > 0 else "DL不要"
+                dl_str = _fmt_gb(dl_bytes) if dl_bytes > 0 else tr("DL不要")
 
                 row = QHBoxLayout()
-                cb = QCheckBox(info["label"])
+                cb = QCheckBox(tr(info["label"]))
                 cb.setStyleSheet("font-size: 13px; color: #eee;")
                 row.addWidget(cb)
 
-                desc_lbl = QLabel(f"{info['desc']}  |  追加DL: {dl_str}")
+                desc_lbl = QLabel(tr("{desc}  |  追加DL: {dl_str}").format(desc=tr(info["desc"]), dl_str=dl_str))
                 desc_lbl.setStyleSheet("color: #999; font-size: 11px;")
                 desc_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 row.addWidget(desc_lbl, stretch=1)
@@ -91,7 +92,7 @@ class ModelPresetDialog(QDialog):
                 layout.addLayout(row)
                 self._checks[key] = cb
 
-        self._overall_lbl = QLabel("全体進捗")
+        self._overall_lbl = QLabel(tr("全体進捗"))
         self._overall_lbl.setStyleSheet("color: #4fc3f7; font-size: 11px;")
         self._overall_lbl.setVisible(False)
         layout.addWidget(self._overall_lbl)
@@ -103,7 +104,7 @@ class ModelPresetDialog(QDialog):
         self._overall_bar.setStyleSheet(_BAR_BLUE)
         layout.addWidget(self._overall_bar)
 
-        self._file_lbl = QLabel("現在のファイル")
+        self._file_lbl = QLabel(tr("現在のファイル"))
         self._file_lbl.setStyleSheet("color: #ffa726; font-size: 11px;")
         self._file_lbl.setVisible(False)
         layout.addWidget(self._file_lbl)
@@ -124,12 +125,12 @@ class ModelPresetDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
-        self._close_btn = QPushButton("キャンセル")
+        self._close_btn = QPushButton(tr("キャンセル"))
         self._close_btn.setStyleSheet("padding: 10px 24px;")
         self._close_btn.clicked.connect(self.reject)
         btn_row.addWidget(self._close_btn)
 
-        self._install_btn = QPushButton("インストール開始")
+        self._install_btn = QPushButton(tr("インストール開始"))
         self._install_btn.setStyleSheet(
             "padding: 10px 24px; background: #1565c0; color: white; border: none; border-radius: 4px;"
         )
@@ -161,7 +162,7 @@ class ModelPresetDialog(QDialog):
     def mark_done(self) -> None:
         self._overall_bar.setValue(100)
         self._file_bar.setValue(100)
-        self._status_lbl.setText("インストール完了！")
+        self._status_lbl.setText(tr("インストール完了！"))
         self._install_btn.setEnabled(False)
-        self._close_btn.setText("閉じる")
+        self._close_btn.setText(tr("閉じる"))
         self._close_btn.setEnabled(True)

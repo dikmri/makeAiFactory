@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import SUPPORTED_IMAGE_EXTENSIONS
+from ..i18n import tr, tr_elapsed
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class ResultView(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(12)
 
-        title = QLabel("動画が完成しました")
+        title = QLabel(tr("動画が完成しました"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("color: #eee; font-size: 20px; font-weight: bold;")
         layout.addWidget(title)
@@ -67,15 +68,15 @@ class ResultView(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
 
-        self._save_btn = QPushButton("名前を付けて保存")
+        self._save_btn = QPushButton(tr("名前を付けて保存"))
         self._save_btn.setStyleSheet(self._btn_style())
         self._save_btn.clicked.connect(self._save_as)
 
-        self._open_btn = QPushButton("保存フォルダを開く")
+        self._open_btn = QPushButton(tr("保存フォルダを開く"))
         self._open_btn.setStyleSheet(self._btn_style())
         self._open_btn.clicked.connect(self._open_folder)
 
-        self._again_btn = QPushButton("画面をリセット")
+        self._again_btn = QPushButton(tr("画面をリセット"))
         self._again_btn.setStyleSheet(self._btn_style())
         self._again_btn.clicked.connect(self.request_again)
 
@@ -112,16 +113,15 @@ class ResultView(QWidget):
         self._output_path = output_path
         self._source_stem = source_stem
         if elapsed_sec > 0:
-            mins = int(elapsed_sec // 60)
-            secs = int(elapsed_sec % 60)
-            time_str = f"生成時間: {mins}分{secs}秒" if mins > 0 else f"生成時間: {secs}秒"
+            time_str = tr("生成時間: {elapsed}").format(elapsed=tr_elapsed(elapsed_sec))
             self._time_label.setText(time_str)
             self._time_label.setVisible(True)
         else:
             self._time_label.setVisible(False)
 
         if vram_peak_gb > 0:
-            bench_str = f"VRAMピーク: {vram_peak_gb:.1f} GB  |  平均: {vram_avg_gb:.1f} GB"
+            bench_str = tr("VRAMピーク: {peak:.1f} GB  |  平均: {avg:.1f} GB").format(
+                peak=vram_peak_gb, avg=vram_avg_gb)
             self._bench_label.setText(bench_str)
             self._bench_label.setVisible(True)
         else:
@@ -138,9 +138,9 @@ class ResultView(QWidget):
         stem = self._source_stem or self._output_path.stem
         dest, _ = QFileDialog.getSaveFileName(
             self,
-            "動画を保存",
+            tr("動画を保存"),
             f"{stem}.mp4",
-            "動画ファイル (*.mp4);;すべてのファイル (*)",
+            tr("動画ファイル (*.mp4);;すべてのファイル (*)"),
         )
         if dest:
             try:

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import APP_NAME, APP_VERSION
 from ..domain.progress import JobProgress, SetupProgress, SetupState
+from ..i18n import tr, tr_elapsed
 from .about_dialog import AboutDialog
 from .drop_area import DropArea
 from .error_dialog import ErrorDialog
@@ -103,7 +104,7 @@ class MainWindow(QMainWindow):
         self._drop_area.image_dropped.connect(self.image_dropped)
         dp_layout.addWidget(self._drop_area, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self._batch_btn = QPushButton("フォルダ選択")
+        self._batch_btn = QPushButton(tr("フォルダ選択"))
         self._batch_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -128,7 +129,7 @@ class MainWindow(QMainWindow):
         rqr_layout.setSpacing(4)
         rqr_layout.setContentsMargins(12, 8, 12, 8)
 
-        rqr_title = QLabel("🌐 インターネット投入口 公開中")
+        rqr_title = QLabel(tr("🌐 インターネット投入口 公開中"))
         rqr_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         rqr_title.setStyleSheet(
             "font-size: 12px; color: #66bb6a; font-weight: bold;"
@@ -164,39 +165,39 @@ class MainWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
 
-        self._discord_status_lbl = QLabel("Discord Bot: 未設定")
+        self._discord_status_lbl = QLabel(tr("Discord Bot: 未設定"))
         self._discord_status_lbl.setStyleSheet("color: #555; font-size: 11px; padding: 0 8px;")
         self._status_bar.addPermanentWidget(self._discord_status_lbl)
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
 
-        file_menu = menu_bar.addMenu("ファイル")
-        open_output_action = QAction("保存フォルダを開く", self)
+        file_menu = menu_bar.addMenu(tr("ファイル"))
+        open_output_action = QAction(tr("保存フォルダを開く"), self)
         open_output_action.triggered.connect(self._open_output_dir)
         file_menu.addAction(open_output_action)
         file_menu.addSeparator()
-        quit_action = QAction("終了", self)
+        quit_action = QAction(tr("終了"), self)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
-        settings_menu = menu_bar.addMenu("設定")
-        change_loc_action = QAction("インストール場所を変更...", self)
+        settings_menu = menu_bar.addMenu(tr("設定"))
+        change_loc_action = QAction(tr("インストール場所を変更..."), self)
         change_loc_action.triggered.connect(self._change_install_location)
         settings_menu.addAction(change_loc_action)
 
-        auto_save_action = QAction("自動保存先を設定...", self)
+        auto_save_action = QAction(tr("自動保存先を設定..."), self)
         auto_save_action.triggered.connect(self._change_auto_save_folder)
         settings_menu.addAction(auto_save_action)
 
-        self._auto_save_enabled_action = QAction("完成時に自動保存する", self)
+        self._auto_save_enabled_action = QAction(tr("完成時に自動保存する"), self)
         self._auto_save_enabled_action.setCheckable(True)
         self._auto_save_enabled_action.setChecked(False)
         self._auto_save_enabled_action.triggered.connect(self._on_auto_save_toggled)
         settings_menu.addAction(self._auto_save_enabled_action)
         self._auto_save_toggle_cb = None
 
-        self._always_on_top_action = QAction("常に最前面に表示", self)
+        self._always_on_top_action = QAction(tr("常に最前面に表示"), self)
         self._always_on_top_action.setCheckable(True)
         self._always_on_top_action.setChecked(False)
         self._always_on_top_action.triggered.connect(self._on_always_on_top_toggled)
@@ -204,7 +205,7 @@ class MainWindow(QMainWindow):
         self._always_on_top_callback = None
 
         settings_menu.addSeparator()
-        self._preset_menu = settings_menu.addMenu("モデルプリセット")
+        self._preset_menu = settings_menu.addMenu(tr("モデルプリセット"))
         self._preset_group = QActionGroup(self)
         self._preset_group.setExclusive(True)
         self._preset_actions: dict[str, QAction] = {}
@@ -213,13 +214,13 @@ class MainWindow(QMainWindow):
         self._rebuild_preset_menu(installed_presets=["normal"], active_preset="normal")
 
         settings_menu.addSeparator()
-        vram_menu = settings_menu.addMenu("VRAMモード")
+        vram_menu = settings_menu.addMenu(tr("VRAMモード"))
         self._vram_group = QActionGroup(self)
         self._vram_group.setExclusive(True)
         self._vram_actions: dict[str, QAction] = {}
         for mode, label in [
-            ("normal", "通常モード (推奨: 16GB+)"),
-            ("novram", "超省VRAMモード --novram (～16GB未満 / 低速・RAM大量消費)"),
+            ("normal", tr("通常モード (推奨: 16GB+)")),
+            ("novram", tr("超省VRAMモード --novram (～16GB未満 / 低速・RAM大量消費)")),
         ]:
             act = QAction(label, self)
             act.setCheckable(True)
@@ -232,7 +233,22 @@ class MainWindow(QMainWindow):
         self._vram_mode_callback = None
 
         settings_menu.addSeparator()
-        self._sage_attention_action = QAction("高速化 (SageAttention) を使う", self)
+        from ..i18n import LANGUAGE_LABELS, SUPPORTED_LANGUAGES
+        lang_menu = settings_menu.addMenu("言語 / Language")
+        self._lang_group = QActionGroup(self)
+        self._lang_group.setExclusive(True)
+        self._lang_actions: dict[str, QAction] = {}
+        for lang in SUPPORTED_LANGUAGES:
+            act = QAction(LANGUAGE_LABELS[lang], self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda checked, lg=lang: self._on_language_selected(lg))
+            self._lang_group.addAction(act)
+            lang_menu.addAction(act)
+            self._lang_actions[lang] = act
+        self._language_callback = None
+
+        settings_menu.addSeparator()
+        self._sage_attention_action = QAction(tr("高速化 (SageAttention) を使う"), self)
         self._sage_attention_action.setCheckable(True)
         self._sage_attention_action.setChecked(False)
         self._sage_attention_action.setEnabled(False)
@@ -241,25 +257,25 @@ class MainWindow(QMainWindow):
         self._sage_attention_callback = None
 
         settings_menu.addSeparator()
-        discord_action = QAction("Discord Bot 設定...", self)
+        discord_action = QAction(tr("Discord Bot 設定..."), self)
         discord_action.triggered.connect(self.discord_settings_requested)
         settings_menu.addAction(discord_action)
 
-        remote_room_action = QAction("インターネット投入口 β...", self)
+        remote_room_action = QAction(tr("インターネット投入口 β..."), self)
         remote_room_action.triggered.connect(self.remote_room_requested)
         settings_menu.addAction(remote_room_action)
 
         settings_menu.addSeparator()
-        se_menu = settings_menu.addMenu("完成通知音")
+        se_menu = settings_menu.addMenu(tr("完成通知音"))
 
-        self._se_enabled_action = QAction("通知音を鳴らす", self)
+        self._se_enabled_action = QAction(tr("通知音を鳴らす"), self)
         self._se_enabled_action.setCheckable(True)
         self._se_enabled_action.setChecked(True)
         self._se_enabled_action.triggered.connect(self._on_se_enabled_toggled)
         se_menu.addAction(self._se_enabled_action)
         self._se_enabled_callback = None
 
-        self._se_batch_action = QAction("フォルダ生成完了時も鳴らす", self)
+        self._se_batch_action = QAction(tr("フォルダ生成完了時も鳴らす"), self)
         self._se_batch_action.setCheckable(True)
         self._se_batch_action.setChecked(True)
         self._se_batch_action.triggered.connect(self._on_se_batch_toggled)
@@ -271,7 +287,7 @@ class MainWindow(QMainWindow):
         self._se_volume_group.setExclusive(True)
         self._se_volume_actions: dict[int, QAction] = {}
         for vol in (25, 50, 75, 100):
-            act = QAction(f"音量 {vol}%", self)
+            act = QAction(tr("音量 {vol}%").format(vol=vol), self)
             act.setCheckable(True)
             act.triggered.connect(lambda checked, v=vol: self._on_se_volume_selected(v))
             self._se_volume_group.addAction(act)
@@ -279,28 +295,28 @@ class MainWindow(QMainWindow):
             self._se_volume_actions[vol] = act
         self._se_volume_callback = None
 
-        help_menu = menu_bar.addMenu("ヘルプ")
+        help_menu = menu_bar.addMenu(tr("ヘルプ"))
 
-        dev_action = QAction("開発モード", self)
+        dev_action = QAction(tr("開発モード"), self)
         dev_action.setShortcut("Ctrl+Shift+D")
         dev_action.triggered.connect(self.dev_mode_requested)
         help_menu.addAction(dev_action)
         help_menu.addSeparator()
 
-        log_action = QAction("ログを開く", self)
+        log_action = QAction(tr("ログを開く"), self)
         log_action.triggered.connect(self._open_logs)
         help_menu.addAction(log_action)
 
-        diag_action = QAction("runtime診断", self)
+        diag_action = QAction(tr("runtime診断"), self)
         diag_action.triggered.connect(self._show_diagnostics)
         help_menu.addAction(diag_action)
 
-        repair_action = QAction("runtimeを修復", self)
+        repair_action = QAction(tr("runtimeを修復"), self)
         repair_action.triggered.connect(self._request_repair)
         help_menu.addAction(repair_action)
 
         help_menu.addSeparator()
-        about_action = QAction("バージョン情報", self)
+        about_action = QAction(tr("バージョン情報"), self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
@@ -420,7 +436,7 @@ class MainWindow(QMainWindow):
             if key not in installed_presets:
                 continue
             info = MODEL_PRESETS[key]
-            act = QAction(info["label"], self)
+            act = QAction(tr(info["label"]), self)
             act.setCheckable(True)
             act.setChecked(key == active_preset)
             act.triggered.connect(lambda checked, k=key: self._on_preset_selected(k))
@@ -429,7 +445,7 @@ class MainWindow(QMainWindow):
             self._preset_actions[key] = act
 
         self._preset_menu.addSeparator()
-        add_act = QAction("プリセットを追加...", self)
+        add_act = QAction(tr("プリセットを追加..."), self)
         add_act.triggered.connect(self._on_add_preset)
         self._preset_menu.addAction(add_act)
 
@@ -456,6 +472,17 @@ class MainWindow(QMainWindow):
         if self._vram_mode_callback:
             self._vram_mode_callback(mode)
 
+    def set_language_callback(self, cb) -> None:
+        self._language_callback = cb
+
+    def set_current_language(self, lang: str) -> None:
+        if lang in self._lang_actions:
+            self._lang_actions[lang].setChecked(True)
+
+    def _on_language_selected(self, lang: str) -> None:
+        if self._language_callback:
+            self._language_callback(lang)
+
     def set_sage_attention_callback(self, cb) -> None:
         self._sage_attention_callback = cb
 
@@ -467,9 +494,9 @@ class MainWindow(QMainWindow):
         self._sage_attention_action.setEnabled(available)
         if not available:
             self._sage_attention_action.setChecked(False)
-            self._sage_attention_action.setText("高速化 (SageAttention) を使う (この環境では未対応)")
+            self._sage_attention_action.setText(tr("高速化 (SageAttention) を使う (この環境では未対応)"))
         else:
-            self._sage_attention_action.setText("高速化 (SageAttention) を使う")
+            self._sage_attention_action.setText(tr("高速化 (SageAttention) を使う"))
 
     def _on_sage_attention_toggled(self, checked: bool) -> None:
         if self._sage_attention_callback:
@@ -568,11 +595,9 @@ class MainWindow(QMainWindow):
         self._progress_view.hide_cancel()
         self._stack.setCurrentIndex(_PAGE_RESULT)
         self._result_view.show_result(output_path, source_stem, elapsed_sec, vram_peak_gb, vram_avg_gb)
-        mins = int(elapsed_sec // 60)
-        secs = int(elapsed_sec % 60)
-        elapsed_str = f" ({mins}分{secs}秒)" if mins > 0 else (f" ({secs}秒)" if secs > 0 else "")
+        elapsed_str = f" ({tr_elapsed(elapsed_sec)})" if elapsed_sec >= 1 else ""
         vram_str = f" | VRAM peak: {vram_peak_gb:.1f}GB" if vram_peak_gb > 0 else ""
-        self._status_bar.showMessage(f"完成: {output_path.name}{elapsed_str}{vram_str}")
+        self._status_bar.showMessage(tr("完成: {name}").format(name=output_path.name) + elapsed_str + vram_str)
 
     def show_error(self, title: str, message: str, detail: str = "", show_repair: bool = False) -> None:
         repair = ErrorDialog.show_error(title, message, detail, self, show_repair)
@@ -582,15 +607,15 @@ class MainWindow(QMainWindow):
     def update_status(self, message: str) -> None:
         self._status_bar.showMessage(message)
 
-    def update_discord_status(self, status_text: str) -> None:
+    def update_discord_status(self, status_code: str, status_text: str) -> None:
         """Discord Bot の状態をステータスバー右端に反映する。"""
-        if "接続完了" in status_text:
+        if status_code == "connected":
             color = "#66bb6a"
             indicator = "●"
-        elif "エラー" in status_text or "無効" in status_text:
+        elif status_code == "error":
             color = "#f88"
             indicator = "●"
-        elif "接続中" in status_text or "再接続" in status_text:
+        elif status_code in ("connecting", "reconnecting"):
             color = "#ffa726"
             indicator = "○"
         else:
@@ -638,7 +663,7 @@ class MainWindow(QMainWindow):
             os.startfile(str(self._logs_dir))
 
     def _show_diagnostics(self) -> None:
-        QMessageBox.information(self, "runtime診断", self._system_info_text or "診断情報がありません。")
+        QMessageBox.information(self, tr("runtime診断"), self._system_info_text or tr("診断情報がありません。"))
 
     def _change_install_location(self) -> None:
         if self._change_location_cb:
@@ -651,8 +676,8 @@ class MainWindow(QMainWindow):
     def _request_repair(self) -> None:
         if self._repair_callback:
             result = QMessageBox.question(
-                self, "runtimeを修復",
-                "runtimeを修復しますか？\n（インターネット接続が必要な場合があります）",
+                self, tr("runtimeを修復"),
+                tr("runtimeを修復しますか？\n（インターネット接続が必要な場合があります）"),
             )
             if result == QMessageBox.StandardButton.Yes:
                 self._repair_callback()

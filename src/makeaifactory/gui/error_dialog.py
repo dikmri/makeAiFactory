@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import tr
+
 
 class ErrorDialog(QDialog):
     def __init__(
@@ -21,7 +23,7 @@ class ErrorDialog(QDialog):
         show_repair: bool = False,
     ):
         super().__init__(parent)
-        self.setWindowTitle("エラー")
+        self.setWindowTitle(tr("エラー"))
         self.setMinimumWidth(480)
         self._repair_requested = False
 
@@ -46,11 +48,11 @@ class ErrorDialog(QDialog):
             layout.addWidget(detail_box)
 
         btn_box = QDialogButtonBox()
-        ok_btn = btn_box.addButton("閉じる", QDialogButtonBox.ButtonRole.AcceptRole)
+        ok_btn = btn_box.addButton(tr("閉じる"), QDialogButtonBox.ButtonRole.AcceptRole)
         ok_btn.setStyleSheet("padding: 8px 20px;")
 
         if show_repair:
-            repair_btn = QPushButton("自動修復する")
+            repair_btn = QPushButton(tr("自動修復する"))
             repair_btn.setStyleSheet("padding: 8px 20px; background: #1565c0; color: white; border: none; border-radius: 4px;")
             repair_btn.clicked.connect(self._on_repair)
             layout.addWidget(repair_btn)
