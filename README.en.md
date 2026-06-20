@@ -140,7 +140,7 @@ If you want to specify multiple channels, repeat the same steps and note the IDs
 2. Click **Settings → Discord Bot Settings...** on the menu bar.
 3. Check **“Enable Discord Bot”**
 4. Paste the token you noted in step 1 into **“Bot Token”**
-5. Enter the obtained ID in **“Monitoring Channel ID”** (separate with a comma if there are multiple IDs. Leave blank to monitor all channels)
+5. Enter the obtained ID in **"Monitoring channel ID"** (separate with commas if multiple IDs are used. Leave blank to monitor all channels)
 6. Click **Save and Apply**
 7. If ``Connection Completed'' is displayed in the ``Bot Status'' dialog box, you are done!
 
