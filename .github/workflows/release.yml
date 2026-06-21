@@ -34,6 +34,19 @@ jobs:
             -replace 'version = "[^"]*"', "version = `"$version`"" |
             Set-Content pyproject.toml
 
+      - name: Inject error report webhook URL
+        shell: pwsh
+        env:
+          ERROR_REPORT_WEBHOOK_URL: ${{ secrets.ERROR_REPORT_WEBHOOK_URL }}
+        run: |
+          if ($env:ERROR_REPORT_WEBHOOK_URL) {
+            (Get-Content src\makeaifactory\constants.py) `
+              -replace 'ERROR_REPORT_WEBHOOK_URL = "[^"]*"', "ERROR_REPORT_WEBHOOK_URL = `"$env:ERROR_REPORT_WEBHOOK_URL`"" |
+              Set-Content src\makeaifactory\constants.py
+          } else {
+            Write-Output "ERROR_REPORT_WEBHOOK_URL secret未設定。報告機能は無効のままビルドします。"
+          }
+
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:

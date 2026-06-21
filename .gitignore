@@ -53,3 +53,12 @@ tools/__pycache__/
 
 # Discord Bot（トークンが含まれるため）
 discord_bot_config.json
+
+# ユーザーから収集したエラー報告（ログ抜粋等が含まれるため）
+/devs/error_reports/
+
+# 検証用の一時スクリプト・スクリーンショット（git管理不要）
+/devs/_scratch/
+
+# エラー報告取得CLI用の認証情報（Webhook URL・Botトークン等）
+/devs/.env.error_reports

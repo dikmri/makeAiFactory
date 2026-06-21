@@ -5,6 +5,11 @@ RUNTIME_VERSION = "2026.06.14.1"
 WORKFLOW_TEMPLATE_VERSION = "1"
 MANIFEST_VERSION = "1"
 
+# エラー報告(diagnostics.py/error_reporter.py)の送信先 Discord Webhook URL。
+# 投稿専用権限のみのためソースに残しても実害は小さいが、release.yml の
+# Secrets注入ステップでビルド時に実際の値へ置換する。空文字の間は報告機能を無効化する。
+ERROR_REPORT_WEBHOOK_URL = ""
+
 COMFY_HOST = "127.0.0.1"
 COMFY_PORT_RANGE = (17860, 17960)
 COMFY_STARTUP_TIMEOUT = 300

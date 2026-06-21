@@ -328,6 +328,7 @@ class MainWindow(QMainWindow):
         self._output_dir: Path | None = None
         self._system_info_text: str = ""
         self._repair_callback = None
+        self._report_callback = None
         self._change_location_cb = None
         self._auto_save_folder_cb = None
         self._vram_mode_callback = None
@@ -345,6 +346,9 @@ class MainWindow(QMainWindow):
 
     def set_repair_callback(self, cb) -> None:
         self._repair_callback = cb
+
+    def set_report_callback(self, cb) -> None:
+        self._report_callback = cb
 
     def set_change_location_callback(self, cb) -> None:
         self._change_location_cb = cb
@@ -600,9 +604,14 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(tr("完成: {name}").format(name=output_path.name) + elapsed_str + vram_str)
 
     def show_error(self, title: str, message: str, detail: str = "", show_repair: bool = False) -> None:
-        repair = ErrorDialog.show_error(title, message, detail, self, show_repair)
+        from ..core.error_reporter import report_enabled
+        repair, report = ErrorDialog.show_error(
+            title, message, detail, self, show_repair, report_enabled(),
+        )
         if repair and self._repair_callback:
             self._repair_callback()
+        if report and self._report_callback:
+            self._report_callback(title, message, detail)
 
     def update_status(self, message: str) -> None:
         self._status_bar.showMessage(message)

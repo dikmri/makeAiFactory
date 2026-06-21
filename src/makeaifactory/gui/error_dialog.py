@@ -21,11 +21,13 @@ class ErrorDialog(QDialog):
         detail: str = "",
         parent: QWidget | None = None,
         show_repair: bool = False,
+        show_report: bool = False,
     ):
         super().__init__(parent)
         self.setWindowTitle(tr("エラー"))
         self.setMinimumWidth(480)
         self._repair_requested = False
+        self._report_requested = False
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -57,6 +59,12 @@ class ErrorDialog(QDialog):
             repair_btn.clicked.connect(self._on_repair)
             layout.addWidget(repair_btn)
 
+        if show_report:
+            report_btn = QPushButton(tr("エラーを報告する"))
+            report_btn.setStyleSheet("padding: 8px 20px; background: #424242; color: white; border: none; border-radius: 4px;")
+            report_btn.clicked.connect(self._on_report)
+            layout.addWidget(report_btn)
+
         btn_box.accepted.connect(self.accept)
         layout.addWidget(btn_box)
 
@@ -64,9 +72,17 @@ class ErrorDialog(QDialog):
         self._repair_requested = True
         self.accept()
 
+    def _on_report(self) -> None:
+        self._report_requested = True
+        self.accept()
+
     @property
     def repair_requested(self) -> bool:
         return self._repair_requested
+
+    @property
+    def report_requested(self) -> bool:
+        return self._report_requested
 
     @staticmethod
     def show_error(
@@ -75,7 +91,8 @@ class ErrorDialog(QDialog):
         detail: str = "",
         parent: QWidget | None = None,
         show_repair: bool = False,
-    ) -> bool:
-        dialog = ErrorDialog(title, message, detail, parent, show_repair)
+        show_report: bool = False,
+    ) -> tuple[bool, bool]:
+        dialog = ErrorDialog(title, message, detail, parent, show_repair, show_report)
         dialog.exec()
-        return dialog.repair_requested
+        return dialog.repair_requested, dialog.report_requested

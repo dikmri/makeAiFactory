@@ -19,6 +19,8 @@ from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENS
 from .i18n import tr, tr_elapsed
 from .core.app_controller import AppController
 from .core.bot_state import write_bot_state
+from .core.diagnostics import build_diagnostic_payload
+from .core.error_reporter import send_error_report
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
 from .core.paths import AppPaths, _exe_dir
@@ -54,6 +56,7 @@ from .core.discord_bot_controller import DiscordBotController
 from .gui.batch_dialog import BatchDialog
 from .gui.dev_mode_dialog import DevModeDialog
 from .gui.discord_settings_dialog import DiscordSettingsDialog
+from .gui.error_report_dialog import ErrorReportDialog
 from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
 from .gui.main_window import MainWindow
@@ -74,6 +77,7 @@ class _AsyncSignals(QObject):
     batch_current_image = Signal(Path)  # バッチ処理で処理中の画像が切り替わった
     batch_done          = Signal(int, int, float)     # completed, total, elapsed_sec
     error               = Signal(str, str, str, bool)
+    report_sent         = Signal(bool, str)  # success, message
     app_quit            = Signal()
 
 
@@ -141,6 +145,55 @@ def run_app() -> int:
     window = MainWindow()
     window.set_paths(paths.logs_dir, paths.outputs_dir)
     window.set_repair_callback(lambda: _trigger_repair(ctrl, window, paths, settings))
+    window.set_report_callback(lambda title, message, detail: _on_report_requested(title, message, detail))
+
+    def _global_excepthook(exc_type, exc_value, exc_tb) -> None:
+        import traceback
+        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        logger.error("未処理の例外:\n%s", tb_text)
+        try:
+            window.show_error(tr("予期しないエラー"), str(exc_value), tb_text[-2000:], False)
+        except Exception:
+            pass
+
+    sys.excepthook = _global_excepthook
+
+    def _on_report_requested(title: str, message: str, detail: str) -> None:
+        from .core.diagnostics import sanitize_text
+
+        payload = build_diagnostic_payload(
+            title=title,
+            message=message,
+            detail=detail,
+            system_info=ctrl.system_info,
+            vram_mode=settings.vram_mode,
+            model_preset=settings.model_preset,
+            sage_attention_enabled=settings.sage_attention_enabled,
+            runtime_state=ctrl.runtime_state_text,
+            app_log_path=paths.app_log,
+        )
+        import json
+        preview_text = json.dumps(payload.to_dict(), ensure_ascii=False, indent=2)
+        dlg = ErrorReportDialog(preview_text, window)
+
+        def _on_send(comment: str) -> None:
+            payload.user_comment = sanitize_text(comment)
+
+            async def _do_send() -> None:
+                success, msg = await send_error_report(payload)
+                signals.report_sent.emit(success, msg)
+
+            pool = QThreadPool.globalInstance()
+            pool.start(_Worker(_do_send(), signals))
+
+        dlg.send_requested.connect(_on_send)
+        dlg.exec()
+
+    def _on_report_sent(success: bool, msg: str) -> None:
+        if success:
+            QMessageBox.information(window, tr("送信完了"), msg)
+        else:
+            QMessageBox.warning(window, tr("送信失敗"), msg)
 
     def _change_install_location() -> None:
         dlg = InstallLocationDialog(runtime_root, window)
@@ -769,6 +822,7 @@ def run_app() -> int:
     signals.batch_current_image.connect(_on_batch_current_image, Qt.ConnectionType.QueuedConnection)
     signals.batch_done.connect(_on_batch_done,                  Qt.ConnectionType.QueuedConnection)
     signals.error.connect(_on_error,                            Qt.ConnectionType.QueuedConnection)
+    signals.report_sent.connect(_on_report_sent,                Qt.ConnectionType.QueuedConnection)
     signals.app_quit.connect(app.quit,                          Qt.ConnectionType.QueuedConnection)
 
     # ─────────────────────────────────────────────────────────────────────

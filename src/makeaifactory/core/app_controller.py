@@ -76,6 +76,14 @@ class AppController:
         with tpl_path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
+    @property
+    def system_info(self) -> SystemInfo | None:
+        return self._system_info
+
+    @property
+    def runtime_state_text(self) -> str:
+        return self._state.setup_state.value
+
     def get_system_info_text(self) -> str:
         if not self._system_info:
             return tr("システム情報未取得")
