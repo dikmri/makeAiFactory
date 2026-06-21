@@ -62,3 +62,9 @@ discord_bot_config.json
 
 # エラー報告取得CLI用の認証情報（Webhook URL・Botトークン等）
 /devs/.env.error_reports
+
+# 自動チェックスクリプトの実行ログ
+/devs/logs/
+
+# エラー報告の自動チェック用スクリプト（PC個別のタスクスケジューラ設定のため非コミット）
+/devs/run_daily_error_check.ps1
