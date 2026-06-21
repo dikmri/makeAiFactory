@@ -27,6 +27,8 @@ You can automatically set up ComfyUI and Wan 2.2 models to generate high-quality
 - **Immediate generation by drag and drop/paste to clipboard** — Drop an image into the window or paste it with `Ctrl+V` to generate a video
 - **Batch folder generation** — Specify a folder and convert multiple images into a video at once (cancellation midway)
 - **Discord Bot Integration** — Set up and launch a bot that returns a video when you post an image to Discord from within the app
+- **Internet input port β** — Issue a temporary public URL and allow people in remote locations to upload images from their browser (uses Cloudflare Quick Tunnel, no account required)
+- **Multilingual support** — Japanese / English / Chinese / 한국어 can be switched within the app (automatically detects the OS language at startup)
 - **Completely local processing** — Internet connection required for initial setup only. Generated data is not sent externally
 - **Automatic setup** — The app automatically builds the Python environment, ComfyUI, and model.
 - **Freely select the installation location** — Supports drives other than C drive
@@ -92,7 +94,9 @@ You can change the following items from **Settings** on the menu bar.
 - VRAM mode (normal/ultra-saving VRAM)
 - Enabling acceleration (SageAttention)
 - Completion notification sound (sound/not sound, when creating folder, volume)
+- Language switching (Japanese / English / Chinese / 한국어)
 - **Discord Bot settings** (described later)
+- **Internet input port β** (described later)
 
 ---
 
@@ -140,7 +144,7 @@ If you want to specify multiple channels, repeat the same steps and note the IDs
 2. Click **Settings → Discord Bot Settings...** on the menu bar.
 3. Check **“Enable Discord Bot”**
 4. Paste the token you noted in step 1 into **“Bot Token”**
-5. Enter the obtained ID in **"Monitoring channel ID"** (separate with commas if multiple IDs are used. Leave blank to monitor all channels)
+5. Enter the obtained ID in **“Monitoring Channel ID”** (separate with a comma if there are multiple IDs. Leave blank to monitor all channels)
 6. Click **Save and Apply**
 7. If ``Connection Completed'' is displayed in the ``Bot Status'' dialog box, you are done!
 
@@ -152,27 +156,59 @@ If you want to specify multiple channels, repeat the same steps and note the IDs
 
 ---
 
+## Internet input port β (remote upload)
+
+This is a feature that allows you to issue a temporary public URL and have someone in a remote location upload an image and receive the generated video without using Discord. Cloudflare Quick Tunnel is used, so a Cloudflare account is not required.
+
+### How to use
+
+1. Click **"Settings" → "Internet Input Slot β..."** on the menu bar.
+2. Select the public settings (expiration date, authentication method, maximum number of queues, limit on consecutive submissions per person) and click **"Start input slot"**
+3. Share the issued URL and QR code (with PIN) with the person you want to send the image to.
+4. When the other person accesses it with a browser and uploads an image, a video will be generated and available for download.
+5. When it is no longer needed, end publishing by clicking **"Stop input slot"** (connected users will be disconnected and the URL will become invalid).
+
+### Public settings
+
+| Item | Choice |
+|------|--------|
+| Expiration date | 1 hour / 3 hours (recommended) / 6 hours |
+| Authentication method | QR code + PIN (recommended) / QR code only |
+| Maximum number of waiting items | 1 item / 3 items / 5 items |
+| Consecutive pitching limit (per person) | 5 minutes / 10 minutes (recommended) / 30 minutes |
+
+### Safety features
+
+During operation, you can check the status of "Waiting / Generating / Completed / Failed" in real time. In an emergency, you can perform the following operations.
+
+- **Stop accepting** — Reject only new uploads (jobs in progress will continue)
+- **Cancel generation** — Cancel the running generation on the spot
+- **Clear Queue** — Delete all waiting jobs
+
+---
+
 ## For developers
 
 ### Required environment
 
 -Python 3.13
 - Git
+- [uv](https://github.com/astral-sh/uv)
 
 ### set up
 
 ```bash
 git clone https://github.com/dikmri/makeAiFactory.git
 cd makeAiFactory
-python -m venv .venv
-.venv\Scripts\pip install pyinstaller PySide6 httpx websockets pydantic aiofiles pillow hatchling
-.venv\Scripts\pip install . --no-deps
+uv sync
 ```
+
+Dependencies (PySide6, httpx, discord.py, aiohttp, qrcode, etc.) are automatically installed from `pyproject.toml` / `uv.lock`.
 
 ### EXE build
 
 ```bash
-python -m PyInstaller makeAiFactory.spec --noconfirm
+uv run pyinstaller makeAiFactory.spec --noconfirm
 ```
 
 Build artifacts are output to `dist\makeAiFactory\`.
@@ -180,7 +216,7 @@ Build artifacts are output to `dist\makeAiFactory\`.
 ### Regenerate icon
 
 ```bash
-python tools\create_icon.py
+uv run python tools\create_icon.py
 ```
 
 `assets\icon.ico` and `assets\icon.png` (for README) will be generated.
@@ -190,8 +226,8 @@ python tools\create_icon.py
 Create and push Git tags and GitHub Actions will automatically build and release them.
 
 ```bash
-git tag v0.7.0
-git push origin v0.7.0
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 ---
@@ -206,6 +242,10 @@ git push origin v0.7.0
 | [PySide6](https://wiki.qt.io/Qt_for_Python) | LGPL-3.0 |
 | [uv](https://github.com/astral-sh/uv) | MIT / Apache-2.0 |
 | [VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) | GPL-3.0 |
+| [discord.py](https://github.com/Rapptz/discord.py) | MIT |
+| [aiohttp](https://github.com/aio-libs/aiohttp) | Apache-2.0 |
+| [qrcode](https://github.com/lincolnloop/python-qrcode) | BSD |
+| [cloudflared](https://github.com/cloudflare/cloudflared) | Apache-2.0 (separate automatic download with Internet input beta function) |
 
 ## License
 
