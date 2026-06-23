@@ -77,6 +77,8 @@ class BatchDialog(QDialog):
         self._ok_btn.setEnabled(False)
         layout.addWidget(buttons)
 
+        self._validate()
+
     def _make_row(self, edit: QLineEdit, browse_fn) -> QWidget:
         row = QWidget()
         h = QHBoxLayout(row)
