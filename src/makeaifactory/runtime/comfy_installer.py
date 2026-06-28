@@ -27,20 +27,40 @@ _CUDA_VARIANT_TABLE: list[tuple[int, int, str, str, str, str, str]] = [
 ]
 
 
+def _parse_smi_cuda_version(stdout: str) -> tuple[int, int] | None:
+    """nvidia-smi の出力からドライバーのCUDAサポートバージョンを抽出する。
+
+    ドライバー世代によりヘッダ表記が異なる:
+      旧:        "CUDA Version: 12.8"
+      新(610.xx〜): "CUDA UMD Version: 13.3"
+    どちらにも対応する。UMD(User Mode Driver)のCUDAバージョンが
+    ドライバーのサポート上限を表す。
+    """
+    m = re.search(r"CUDA(?:\s+UMD)?\s+Version:\s*(\d+)\.(\d+)", stdout)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
 def _detect_driver_cuda_version() -> tuple[int, int] | None:
     """nvidia-smiからドライバーがサポートするCUDAバージョンを検出する。"""
     smi = shutil.which("nvidia-smi")
     if not smi:
+        logger.warning("nvidia-smiがPATH上に見つかりません。")
         return None
     try:
         result = subprocess.run(
             [smi], capture_output=True, text=True, timeout=15, **_no_window_flags()
         )
-        m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", result.stdout)
-        if m:
-            return int(m.group(1)), int(m.group(2))
+        parsed = _parse_smi_cuda_version(result.stdout)
+        if parsed is not None:
+            return parsed
+        logger.warning(
+            "nvidia-smiの出力からCUDAバージョンを解析できませんでした。先頭行: %r",
+            result.stdout.splitlines()[1:4],
+        )
     except Exception as e:
-        logger.debug("nvidia-smi実行失敗: %s", e)
+        logger.warning("nvidia-smi実行失敗: %s", e)
     return None
 
 
@@ -58,7 +78,9 @@ def _select_best_variant(
     不足している場合のみ互換性のある旧バリアントへフォールバックする。
     """
     if detected_cuda is None:
-        logger.warning("nvidia-smiが見つかりません。マニフェスト指定のバリアントを使用します: %s", preferred_variant)
+        logger.warning(
+            "ドライバーのCUDAバージョンを自動検出できませんでした。"
+            "マニフェスト指定のバリアントを使用します: %s", preferred_variant)
         return preferred_variant, preferred_torch_ver, preferred_torchvision_ver, preferred_torchaudio_ver, preferred_index_url
 
     # 優先バリアントが必要とするCUDAバージョンを解析 (例: "cu128" → (12, 8))
