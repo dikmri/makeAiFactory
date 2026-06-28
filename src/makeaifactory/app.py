@@ -308,6 +308,106 @@ def run_app() -> int:
     window.set_preset_change_callback(_on_preset_change)
     window.set_preset_add_callback(lambda: _trigger_preset_install(ctrl, window, paths, settings))
 
+    def _finalize_workflow_switch(workflow_id: str, label: str) -> bool:
+        """選択ワークフローをアクティブ化し、設定とメニューに反映する。成功で True。"""
+        try:
+            ctrl.apply_workflow_preset(workflow_id)
+        except Exception as e:
+            logger.exception("ワークフロー切替に失敗: %s", workflow_id)
+            window.set_active_workflow(settings.workflow)
+            QMessageBox.warning(
+                window,
+                tr("ワークフローの切替に失敗しました"),
+                tr("{label} への切替に失敗しました: {e}").format(label=label, e=e),
+            )
+            return False
+        settings.set_workflow(workflow_id)
+        window.set_active_workflow(workflow_id)
+        return True
+
+    def _start_workflow_download(workflow_id: str, label: str) -> None:
+        """ワークフロー専用モデルをバックグラウンドDLし、完了後に切替を確定する。"""
+        dl_signals = _AsyncSignals()
+        window.show_progress_indeterminate(
+            tr("「{label}」用の追加モデルをダウンロードしています...").format(label=label)
+        )
+
+        def _on_progress(p: SetupProgress) -> None:
+            if p.state == SetupState.READY:
+                window.show_drop_page()
+                if _finalize_workflow_switch(workflow_id, label):
+                    window.update_status(
+                        tr("✓ ワークフローを「{label}」に切り替えました").format(label=label)
+                    )
+            else:
+                window.show_progress(p.message, p.overall_percent, p.message)
+
+        def _on_error(title: str, msg: str, detail: str, show_repair: bool) -> None:
+            window.show_drop_page()
+            window.set_active_workflow(settings.workflow)  # 選択を元に戻す
+            window.show_error(title, msg, detail, False)
+
+        dl_signals.setup_progress.connect(_on_progress, Qt.ConnectionType.QueuedConnection)
+        dl_signals.error.connect(_on_error, Qt.ConnectionType.QueuedConnection)
+
+        async def _do_download() -> None:
+            try:
+                def _cb(p: SetupProgress, s=dl_signals) -> None:
+                    s.setup_progress.emit(p)
+                await ctrl.install_workflow_models(workflow_id, on_progress=_cb)
+            except Exception as e:
+                logger.exception("追加モデルDL失敗: %s", workflow_id)
+                dl_signals.error.emit(tr("追加ダウンロード失敗"), str(e), "", False)
+                return
+            dl_signals.setup_progress.emit(SetupProgress(
+                state=SetupState.READY, message=tr("ダウンロード完了"), percent=100, overall_percent=100,
+            ))
+
+        pool = QThreadPool.globalInstance()
+        pool.start(_Worker(_do_download(), dl_signals))
+
+    def _on_workflow_change(workflow_id: str) -> None:
+        from .constants import WORKFLOW_PRESETS
+        info = WORKFLOW_PRESETS.get(workflow_id, {})
+        label = tr(info.get("label", workflow_id))
+        if workflow_id == settings.workflow:
+            return
+
+        # 追加DLが必要か (ワークフロー専用LoRA等の未配置分) を確認する
+        try:
+            missing_count, missing_bytes = ctrl.workflow_download_requirement(workflow_id)
+        except Exception:
+            logger.exception("追加DL要否の判定に失敗: %s", workflow_id)
+            missing_count, missing_bytes = 0, 0
+
+        if missing_count > 0:
+            mb = missing_bytes / (1024 * 1024)
+            ret = QMessageBox.question(
+                window,
+                tr("追加ダウンロードが必要です"),
+                tr("「{label}」を使うには追加で {count} 個・約 {mb:.0f} MB のモデルを"
+                   "ダウンロードします。\n今すぐダウンロードしますか？").format(
+                    label=label, count=missing_count, mb=mb),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                window.set_active_workflow(settings.workflow)  # 選択を元に戻す
+                return
+            _start_workflow_download(workflow_id, label)
+            return
+
+        # 追加DL不要 → 即時切替
+        if _finalize_workflow_switch(workflow_id, label):
+            QMessageBox.information(
+                window,
+                tr("ワークフローを変更しました"),
+                tr("{label} に設定しました。\n次回の生成から反映されます。").format(label=label),
+            )
+
+    window.set_workflow_change_callback(_on_workflow_change)
+    window.set_active_workflow(settings.workflow)
+
     def _on_sage_attention_toggle(checked: bool) -> None:
         settings.set_sage_attention_enabled(checked)
 
@@ -429,6 +529,19 @@ def run_app() -> int:
     def _on_setup_ready(system_info: str, installed_presets: list, model_preset: str, sage_attention_available: bool) -> None:
         window.set_system_info(system_info)
         window.update_preset_menu(installed_presets, model_preset)
+        # 保存済みワークフロー選択をメニュー表示と runtime_template に反映する。
+        # default は出荷テンプレート(および開発モードでの編集)をそのまま使うため
+        # 再適用しない。pai/fe はアップデートで出荷テンプレートに戻る可能性があるため
+        # 起動時に再適用して選択を確実に反映する。
+        active_wf = settings.workflow
+        window.set_active_workflow(active_wf)
+        if active_wf != "default":
+            try:
+                ctrl.apply_workflow_preset(active_wf)
+            except Exception:
+                logger.exception("起動時のワークフロー再適用に失敗: %s", active_wf)
+                settings.set_workflow("default")
+                window.set_active_workflow("default")
         window.set_sage_attention_available(sage_attention_available)
         window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
         write_bot_state(paths.runtime_root, "idle", ctrl.comfy_port)

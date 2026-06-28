@@ -27,6 +27,49 @@ def _is_node_ref(value) -> bool:
     return isinstance(value, list) and len(value) == 2 and isinstance(value[0], str)
 
 
+# 除去対象だが、出力を参照しているノードへ「中身の文字列」をインライン展開してから
+# 取り除くべきノード。これをしないと、参照元 (例: Positive Prompt の node 48) が
+# 削除済みノードを指したまま残り、生成時に参照切れエラーになる。
+_INLINE_TEXT_CLASS_TYPES = {
+    # 日本語/多言語プロンプトを翻訳して下流へ渡すノード。翻訳はオフラインで再現できない
+    # ため、翻訳前の原文 (text 入力) をそのまま文字列として埋め込む。Wan2.2 の umt5
+    # テキストエンコーダは多言語対応のため、原文のままでも生成は機能する。
+    "GoogleTranslateTextNode",
+}
+
+
+def _inline_removed_text_nodes(workflow: dict) -> None:
+    """_INLINE_TEXT_CLASS_TYPES のノードを、参照しているノードの入力へ
+    文字列としてインライン展開する (workflow を破壊的に更新)。
+
+    展開後、元ノードは未参照になり依存グラフ探索で自然に取り除かれる。
+    text 入力が文字列でない (別ノードへの参照など) 場合は展開できないため
+    そのまま残し、警告ログのみ出す。
+    """
+    for node_id, node in list(workflow.items()):
+        if node.get("class_type") not in _INLINE_TEXT_CLASS_TYPES:
+            continue
+        text = node.get("inputs", {}).get("text")
+        if not isinstance(text, str):
+            logger.warning(
+                "インライン展開不可 (text が文字列でない): node=%s class=%s",
+                node_id, node.get("class_type"),
+            )
+            continue
+        replaced = 0
+        for other in workflow.values():
+            inputs = other.get("inputs", {})
+            for key, value in list(inputs.items()):
+                if _is_node_ref(value) and value[0] == node_id:
+                    inputs[key] = text
+                    replaced += 1
+        if replaced:
+            logger.info(
+                "インライン展開: node %s (%s) の原文を %d 箇所へ埋め込み",
+                node_id, node.get("class_type"), replaced,
+            )
+
+
 def _collect_dependencies(workflow: dict, root_node_ids: list[str]) -> set[str]:
     visited: set[str] = set()
     stack = list(root_node_ids)
@@ -61,6 +104,10 @@ def sanitize_workflow(source: dict) -> dict:
     - 危険ノードを強制除去
     """
     workflow = copy.deepcopy(source)
+
+    # 翻訳ノード等を文字列としてインライン展開してから依存探索する。
+    # (先に除去すると Positive Prompt 等が参照切れになるため、必ずパッチより前に行う)
+    _inline_removed_text_nodes(workflow)
 
     # 必須パッチ
     if RESOLUTION_PICKER_NODE_ID in workflow:

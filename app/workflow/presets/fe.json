@@ -1,0 +1,863 @@
+{
+  "6": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "220",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention High"
+    }
+  },
+  "7": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "221",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention Low"
+    }
+  },
+  "21": {
+    "inputs": {
+      "use_zero_init": false,
+      "zero_init_steps": 2,
+      "model": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "CFGZeroStarAndInit",
+    "_meta": {
+      "title": "CFG Zero High"
+    }
+  },
+  "22": {
+    "inputs": {
+      "use_zero_init": false,
+      "zero_init_steps": 2,
+      "model": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "CFGZeroStarAndInit",
+    "_meta": {
+      "title": "CFG Zero Low"
+    }
+  },
+  "27": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "CLIPを読み込む"
+    }
+  },
+  "29": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "VAEを読み込む"
+    }
+  },
+  "31": {
+    "inputs": {
+      "shift": 7.000000000000002,
+      "model": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "Model Sampler High"
+    }
+  },
+  "34": {
+    "inputs": {
+      "shift": 7.000000000000002,
+      "model": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "Model Sampler Low"
+    }
+  },
+  "37": {
+    "inputs": {
+      "nag_scale": 11,
+      "nag_alpha": 0.25,
+      "nag_tau": 2.3730000000000007,
+      "input_type": "default",
+      "model": [
+        "31",
+        0
+      ],
+      "conditioning": [
+        "55",
+        0
+      ]
+    },
+    "class_type": "WanVideoNAG",
+    "_meta": {
+      "title": "NAG Attention High"
+    }
+  },
+  "41": {
+    "inputs": {
+      "nag_scale": 11,
+      "nag_alpha": 0.25,
+      "nag_tau": 2.3730000000000007,
+      "input_type": "default",
+      "model": [
+        "34",
+        0
+      ],
+      "conditioning": [
+        "55",
+        0
+      ]
+    },
+    "class_type": "WanVideoNAG",
+    "_meta": {
+      "title": "NAG Attention Low"
+    }
+  },
+  "45": {
+    "inputs": {
+      "text": [
+        "48",
+        0
+      ],
+      "clip": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode Positive"
+    }
+  },
+  "48": {
+    "inputs": {
+      "value": "bl0wj0b, A close-up view of a single young woman with performing a blowjob on a man's erect penis., \na woman in front of a penis, she engages in a deep throat blowjob, she swallows the penis all the way. Her lips touches the mans groin. Her nose smashes against the man's hips., \n\nblowjob, deepthroat, \n彼女は白い肌と巨大な胸、そして黒い髪である。, \n女性は男性の勃起したペニスを喉奥まで深く吸い込み、男性器には女性に透明な唾液が少量付着している。ディープスロート。, \n女性の体の動きに合わせて女性の胸も柔らかそうに揺れる。, \n\n女性の肌には透明なオイルが塗られていて、テカテカと光を反射している。女性の肌はきめ細かく非常に綺麗だ。, \n\nとても精密でリアルなエフェクト。, "
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "51": {
+    "inputs": {
+      "value": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走,\n\nworst quality, low quality, lowres, low resolution, blurry, out of focus, pixelated, jpeg artifacts, compression artifacts, artifacts, digital noise, noise, static, grainy, oversharpened, color banding, posterization, chromatic aberration, watermark, logo, text, caption, subtitles, signature, writing, duplicate, out of frame, cluttered background, many people in the background, still frame, morbid, mutilated, deformed, disfigured, mutation, ugly, incomplete, bad anatomy, bad proportions, malformed limbs, extra limbs, missing limbs, three legs, mutated hands, bad hands, poorly drawn hands, extra fingers, missing fingers, fused fingers, too many fingers, poorly drawn face, bad eyes, deformed iris, deformed pupils, crossed eyes, lazy eye, cloned face, long neck, plastic skin, walking backwards, phone, smartphone,\n\nsketch, picture, \n\noverexposed, overexposure, underexposed, poorly lit, washed out, dull colors, oversaturated, undersaturated, over-contrasted, crushed blacks, blown highlights, white clipping, black clipping, vibrant tones, overall grayish tone,\n\nmotion blur, soft focus, bokeh, shallow depth of field, blurry background,\n\nskin blemishes, skin imperfections, acne, scars, pores, blotchy skin, oily skin, greasy skin, dirty, dirt, mud, wrinkles, creases, red lips, effect,Cartoony Effects,, Excessive effects, Unrealistic effects, Low quality effects,\n\nLarge amounts of liquid,Spitting liquid from the mouth,\n\nShake a man's chest,"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "55": {
+    "inputs": {
+      "text": [
+        "51",
+        0
+      ],
+      "clip": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode Negative"
+    }
+  },
+  "95": {
+    "inputs": {
+      "a": [
+        "246",
+        0
+      ],
+      "b": [
+        "244",
+        0
+      ],
+      "operation": "multiply"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Calculate Total Frames"
+    }
+  },
+  "130": {
+    "inputs": {
+      "samples": [
+        "275",
+        0
+      ],
+      "vae": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEデコード"
+    }
+  },
+  "137": {
+    "inputs": {
+      "prefix": "",
+      "suffix": "",
+      "input": [
+        "244",
+        0
+      ]
+    },
+    "class_type": "SomethingToString",
+    "_meta": {
+      "title": "Convert FPS to String"
+    }
+  },
+  "139": {
+    "inputs": {
+      "default": 0,
+      "string": [
+        "137",
+        0
+      ]
+    },
+    "class_type": "String to Float",
+    "_meta": {
+      "title": "Convert FPS to Float"
+    }
+  },
+  "143": {
+    "inputs": {
+      "a": [
+        "95",
+        0
+      ],
+      "b": 1,
+      "operation": "add"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Add First Frame"
+    }
+  },
+  "165": {
+    "inputs": {
+      "model_name": "2x-AnimeSharpV4_Fast_RCAN_PU.safetensors"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "拡大モデルを読み込む"
+    }
+  },
+  "167": {
+    "inputs": {
+      "upscale_model": [
+        "165",
+        0
+      ],
+      "image": [
+        "130",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "モデルを使用して画像を拡大"
+    }
+  },
+  "173": {
+    "inputs": {
+      "a": [
+        "291",
+        0
+      ],
+      "b": [
+        "237",
+        0
+      ],
+      "operation": "multiply"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Calculate Upscale Width"
+    }
+  },
+  "178": {
+    "inputs": {
+      "a": [
+        "291",
+        1
+      ],
+      "b": [
+        "237",
+        0
+      ],
+      "operation": "multiply"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Calculate Upscale Height"
+    }
+  },
+  "181": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": [
+        "173",
+        0
+      ],
+      "height": [
+        "178",
+        0
+      ],
+      "crop": "center",
+      "image": [
+        "167",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "画像を拡大"
+    }
+  },
+  "188": {
+    "inputs": {
+      "frame_rate": [
+        "139",
+        0
+      ],
+      "loop_count": 0,
+      "filename_prefix": "__OUTPUT_PREFIX__",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": false,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "181",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Save Video - Upscaled"
+    }
+  },
+  "189": {
+    "inputs": {
+      "image": "2025-12-25_01-30-07-waiIllustriousSDXL_v160-480672299.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "画像を読み込む"
+    }
+  },
+  "191": {
+    "inputs": {
+      "width": [
+        "291",
+        0
+      ],
+      "height": [
+        "291",
+        1
+      ],
+      "length": [
+        "143",
+        0
+      ],
+      "batch_size": 1,
+      "positive": [
+        "45",
+        0
+      ],
+      "negative": [
+        "55",
+        0
+      ],
+      "vae": [
+        "29",
+        0
+      ],
+      "clip_vision_output": [
+        "196",
+        0
+      ],
+      "start_image": [
+        "206",
+        0
+      ]
+    },
+    "class_type": "WanImageToVideo",
+    "_meta": {
+      "title": "Wan画像からビデオへ"
+    }
+  },
+  "194": {
+    "inputs": {
+      "clip_name": "clip-vit-large-patch14.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision Model"
+    }
+  },
+  "196": {
+    "inputs": {
+      "crop": "center",
+      "clip_vision": [
+        "194",
+        0
+      ],
+      "image": [
+        "291",
+        2
+      ]
+    },
+    "class_type": "CLIPVisionEncode",
+    "_meta": {
+      "title": "CLIPビジョンエンコード"
+    }
+  },
+  "206": {
+    "inputs": {
+      "image": [
+        "291",
+        2
+      ]
+    },
+    "class_type": "ImageRemoveAlpha+",
+    "_meta": {
+      "title": "🔧 Image Remove Alpha"
+    }
+  },
+  "217": {
+    "inputs": {
+      "lora_name": "Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+      "strength_model": 1,
+      "model": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load lightx2v (Low)"
+    }
+  },
+  "219": {
+    "inputs": {
+      "lora_name": "Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
+      "strength_model": 1,
+      "model": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load lightx2v (High)"
+    }
+  },
+  "220": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "NSFW-22-H-e8.safetensors",
+        "strength": 1
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "wan22-m4crom4sti4-i2v-20epoc-high-k3nk.safetensors",
+        "strength": 0.8
+      },
+      "lora_3": {
+        "on": true,
+        "lora": "slop_twerk_HighNoise_merged3_7_v2.safetensors",
+        "strength": 0.3
+      },
+      "lora_4": {
+        "on": true,
+        "lora": "DR34ML4Y_I2V_14B_HIGH_V2.safetensors",
+        "strength": 1
+      },
+      "lora_5": {
+        "on": true,
+        "lora": "jfj-deepthroat-W22-I2V-HN.safetensors",
+        "strength": 1
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "295",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Load Loras (High)"
+    }
+  },
+  "221": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "NSFW-22-L-e8.safetensors",
+        "strength": 1
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "wan22-m4crom4sti4-i2v-20epoc-low-k3nk.safetensors",
+        "strength": 0.7
+      },
+      "lora_3": {
+        "on": true,
+        "lora": "slop_twerk_LowNoise_merged3_7_v2.safetensors",
+        "strength": 0.15
+      },
+      "lora_4": {
+        "on": true,
+        "lora": "DR34ML4Y_I2V_14B_LOW_V2.safetensors",
+        "strength": 0.5
+      },
+      "lora_5": {
+        "on": true,
+        "lora": "jfj-deepthroat-W22-I2V-LN.safetensors",
+        "strength": 0.65
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "296",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Load Loras (Low)"
+    }
+  },
+  "228": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": [
+        "251",
+        0
+      ],
+      "steps": [
+        "261",
+        0
+      ],
+      "cfg": [
+        "250",
+        0
+      ],
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": [
+        "242",
+        0
+      ],
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "31",
+        0
+      ],
+      "positive": [
+        "191",
+        0
+      ],
+      "negative": [
+        "191",
+        1
+      ],
+      "latent_image": [
+        "191",
+        2
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (High)"
+    }
+  },
+  "237": {
+    "inputs": {
+      "Number": "2"
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "Video Resolution Multiplier (Upscale)"
+    }
+  },
+  "242": {
+    "inputs": {
+      "Number": "2"
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "Motion Pass Steps"
+    }
+  },
+  "244": {
+    "inputs": {
+      "Number": "16"
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "Video FPS"
+    }
+  },
+  "246": {
+    "inputs": {
+      "value": 5
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Video Length (Seconds)"
+    }
+  },
+  "248": {
+    "inputs": {
+      "Number": "1.0"
+    },
+    "class_type": "Float",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "250": {
+    "inputs": {
+      "Number": "3"
+    },
+    "class_type": "Float",
+    "_meta": {
+      "title": "Motion CFG"
+    }
+  },
+  "251": {
+    "inputs": {
+      "seed": 1115998371206445
+    },
+    "class_type": "easy seed",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "252": {
+    "inputs": {
+      "Number": "8"
+    },
+    "class_type": "Int",
+    "_meta": {
+      "title": "Generation Steps (1/2 Per Sampler)"
+    }
+  },
+  "256": {
+    "inputs": {
+      "a": [
+        "257",
+        0
+      ],
+      "b": [
+        "242",
+        0
+      ],
+      "operation": "add"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Calculate Motion Switch Step"
+    }
+  },
+  "257": {
+    "inputs": {
+      "a": [
+        "252",
+        0
+      ],
+      "b": 2,
+      "operation": "divide"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Calculate Switch Step"
+    }
+  },
+  "261": {
+    "inputs": {
+      "a": [
+        "252",
+        0
+      ],
+      "b": [
+        "242",
+        0
+      ],
+      "operation": "add"
+    },
+    "class_type": "easy mathInt",
+    "_meta": {
+      "title": "Calculate Total Steps"
+    }
+  },
+  "275": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": [
+        "251",
+        0
+      ],
+      "steps": [
+        "261",
+        0
+      ],
+      "cfg": [
+        "248",
+        0
+      ],
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "start_at_step": [
+        "256",
+        0
+      ],
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "217",
+        0
+      ],
+      "positive": [
+        "191",
+        0
+      ],
+      "negative": [
+        "191",
+        1
+      ],
+      "latent_image": [
+        "282",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Low)"
+    }
+  },
+  "282": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": [
+        "251",
+        0
+      ],
+      "steps": [
+        "261",
+        0
+      ],
+      "cfg": [
+        "248",
+        0
+      ],
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "start_at_step": [
+        "242",
+        0
+      ],
+      "end_at_step": [
+        "256",
+        0
+      ],
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "219",
+        0
+      ],
+      "positive": [
+        "191",
+        0
+      ],
+      "negative": [
+        "191",
+        1
+      ],
+      "latent_image": [
+        "228",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (High)"
+    }
+  },
+  "291": {
+    "inputs": {
+      "resolution_mode": "Low (480x854 Pixel Count)",
+      "override_width": 0,
+      "override_height": 0,
+      "image": [
+        "189",
+        0
+      ]
+    },
+    "class_type": "ResolutionPickerI2V",
+    "_meta": {
+      "title": "Resolution Picker I2V"
+    }
+  },
+  "295": {
+    "inputs": {
+      "unet_name": "easywan22Fastmix_highQ4KM.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Load WAN 2.2 High (GGUF)"
+    }
+  },
+  "296": {
+    "inputs": {
+      "unet_name": "Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Load WAN 2.2 Low (GGUF)"
+    }
+  }
+}

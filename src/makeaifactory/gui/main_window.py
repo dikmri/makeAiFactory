@@ -214,6 +214,14 @@ class MainWindow(QMainWindow):
         self._rebuild_preset_menu(installed_presets=["normal"], active_preset="normal")
 
         settings_menu.addSeparator()
+        self._workflow_menu = settings_menu.addMenu(tr("ワークフロー"))
+        self._workflow_group = QActionGroup(self)
+        self._workflow_group.setExclusive(True)
+        self._workflow_actions: dict[str, QAction] = {}
+        self._workflow_change_callback = None
+        self._build_workflow_menu(active_workflow="default")
+
+        settings_menu.addSeparator()
         vram_menu = settings_menu.addMenu(tr("VRAMモード"))
         self._vram_group = QActionGroup(self)
         self._vram_group.setExclusive(True)
@@ -463,6 +471,36 @@ class MainWindow(QMainWindow):
     def _on_preset_selected(self, preset: str) -> None:
         if self._preset_change_callback:
             self._preset_change_callback(preset)
+
+    def set_workflow_change_callback(self, cb) -> None:
+        self._workflow_change_callback = cb
+
+    def _build_workflow_menu(self, active_workflow: str) -> None:
+        from ..constants import WORKFLOW_PRESETS
+        self._workflow_menu.clear()
+        for act in list(self._workflow_actions.values()):
+            self._workflow_group.removeAction(act)
+        self._workflow_actions.clear()
+
+        for key, info in WORKFLOW_PRESETS.items():
+            act = QAction(tr(info["label"]), self)
+            act.setCheckable(True)
+            act.setChecked(key == active_workflow)
+            desc = info.get("desc", "")
+            if desc:
+                act.setToolTip(tr(desc))
+            act.triggered.connect(lambda checked, k=key: self._on_workflow_selected(k))
+            self._workflow_group.addAction(act)
+            self._workflow_menu.addAction(act)
+            self._workflow_actions[key] = act
+
+    def set_active_workflow(self, workflow_id: str) -> None:
+        if workflow_id in self._workflow_actions:
+            self._workflow_actions[workflow_id].setChecked(True)
+
+    def _on_workflow_selected(self, workflow_id: str) -> None:
+        if self._workflow_change_callback:
+            self._workflow_change_callback(workflow_id)
 
     def _on_add_preset(self) -> None:
         if self._preset_add_callback:

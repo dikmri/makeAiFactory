@@ -276,6 +276,31 @@ class AppController:
         if self._job_ctrl is not None:
             self._job_ctrl.reload_template()
 
+    def apply_workflow_preset(self, workflow_id: str) -> None:
+        """選択されたワークフロープリセットをアクティブにする。
+
+        プリセットの API版ワークフロー (app/workflow/presets/) を api_source として
+        配置し直し、サニタイズして runtime_template を再生成、JobController へ反映する。
+        以降の生成 (本体/Discord/インターネット投入口) すべてに切替が反映される。
+        """
+        from ..constants import DEFAULT_WORKFLOW, WORKFLOW_PRESETS
+        info = WORKFLOW_PRESETS.get(workflow_id) or WORKFLOW_PRESETS[DEFAULT_WORKFLOW]
+        src_path = self._paths.workflow_preset_json(info["source"])
+        if not src_path.exists():
+            raise SetupError(
+                tr("ワークフロー定義が見つかりません: {f}").format(f=info["source"])
+            )
+        api_path = self._paths.api_source_json()
+        api_path.parent.mkdir(parents=True, exist_ok=True)
+        api_path.write_text(src_path.read_text(encoding="utf-8"), encoding="utf-8")
+        load_and_sanitize(
+            api_path,
+            self._paths.runtime_template_json(),
+            self._paths.workflow_dir / "workflow_analysis_report.md",
+        )
+        self.reload_workflow_template()
+        logger.info("ワークフロー切替: %s (%s)", workflow_id, info["source"])
+
     def get_job_controller(self) -> JobController:
         if self._job_ctrl is None:
             template = self._load_workflow_template()
@@ -335,6 +360,59 @@ class AppController:
         check_required_models_present(paths.runtime_root, model_manifest, presets=presets)
         for preset in presets:
             self._settings.add_installed_preset(preset)
+
+    def workflow_download_requirement(self, workflow_id: str) -> tuple[int, int]:
+        """指定ワークフローを使うために追加DLが必要なモデルの (件数, 合計バイト) を返す。
+
+        0件なら追加DL不要 (すぐ切り替え可能)。
+        """
+        from ..runtime.model_installer import get_missing_workflow_models
+        manifest = self._load_model_manifest()
+        missing = get_missing_workflow_models(self._paths.runtime_root, manifest, workflow_id)
+        return len(missing), sum(m.size_bytes for m in missing)
+
+    async def install_workflow_models(
+        self,
+        workflow_id: str,
+        on_progress: SetupCallback | None = None,
+    ) -> None:
+        """指定ワークフロー専用モデルをオンデマンドでDLする。"""
+        from ..runtime.model_installer import (
+            get_missing_workflow_models,
+            install_specific_models,
+        )
+        paths = self._paths
+        manifest = self._load_model_manifest()
+        missing = get_missing_workflow_models(paths.runtime_root, manifest, workflow_id)
+        if not missing:
+            return
+
+        import shutil
+        from ..constants import DISK_BUFFER_GB
+        from ..domain.errors import DiskSpaceError
+        needed_gb = sum(m.size_bytes for m in missing) / (1024 ** 3) + DISK_BUFFER_GB
+        free_gb = shutil.disk_usage(paths.runtime_root).free / (1024 ** 3)
+        logger.info("オンデマンドDL ディスク空き: %.1f GB / 必要: %.1f GB", free_gb, needed_gb)
+        if free_gb < needed_gb:
+            raise DiskSpaceError(required_gb=needed_gb, available_gb=free_gb)
+
+        def _model_progress(name: str, done: int, total: int, file_idx: int, total_files: int) -> None:
+            if not on_progress:
+                return
+            file_pct = done / total * 100 if total > 0 else 0
+            overall_pct = (
+                ((file_idx - 1) + done / total) / total_files * 100
+                if total_files > 0 and total > 0 else 0
+            )
+            on_progress(SetupProgress(
+                state=SetupState.DOWNLOADING_MODELS,
+                message=tr("追加モデルDL中 ({file_idx}/{total_files}): {name}").format(
+                    file_idx=file_idx, total_files=total_files, name=name),
+                percent=file_pct,
+                overall_percent=overall_pct,
+            ))
+
+        await install_specific_models(paths.runtime_root, missing, progress_cb=_model_progress)
 
     def stop_server(self) -> None:
         if self._server:

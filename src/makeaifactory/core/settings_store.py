@@ -15,6 +15,7 @@ _DEFAULTS = {
     "vram_mode": "normal",        # "normal" | "novram"
     "model_preset": "normal",     # "normal" | "lite" | "ultralite"
     "installed_presets": ["normal"],
+    "workflow": "default",        # 生成ワークフローの種類 ("default" | "pai" | "fe")
     "sage_attention_enabled": False,  # 高速化(SageAttention)。未インストール環境では無視されdisabledのまま
     "auto_save_folder": "",       # 動画完成時の自動保存先フォルダ (パスのみ。有効/無効は別フラグ)
     "auto_save_enabled": False,   # 自動保存のON/OFF。フォルダ設定とは独立
@@ -108,6 +109,16 @@ class SettingsStore:
 
     def set_model_preset(self, preset: str) -> None:
         self.set("model_preset", preset)
+
+    @property
+    def workflow(self) -> str:
+        """現在アクティブな生成ワークフローの種類。"""
+        from ..constants import DEFAULT_WORKFLOW, _VALID_WORKFLOWS
+        v = str(self.get("workflow") or DEFAULT_WORKFLOW)
+        return v if v in _VALID_WORKFLOWS else DEFAULT_WORKFLOW
+
+    def set_workflow(self, workflow: str) -> None:
+        self.set("workflow", workflow)
 
     @property
     def installed_presets(self) -> list[str]:

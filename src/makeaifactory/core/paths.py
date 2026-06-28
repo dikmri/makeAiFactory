@@ -167,6 +167,13 @@ class AppPaths:
     def job_dir(self, job_id: str, date_str: str) -> Path:
         return self.outputs_dir / date_str / job_id
 
+    @property
+    def workflow_presets_dir(self) -> Path:
+        return self.workflow_dir / "presets"
+
+    def workflow_preset_json(self, source_filename: str) -> Path:
+        return self.workflow_presets_dir / source_filename
+
     def api_source_json(self) -> Path:
         return self.workflow_dir / "makeAiFactory_api_source.json"
 

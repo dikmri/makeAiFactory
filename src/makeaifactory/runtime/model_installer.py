@@ -127,6 +127,68 @@ async def install_models(
         )
 
 
+def workflow_models(manifest: ModelManifest, workflow_id: str) -> list[ModelEntry]:
+    """指定ワークフロー専用 (workflows に workflow_id を含む) のモデルを返す。"""
+    return [m for m in manifest.models if workflow_id in m.workflows]
+
+
+def get_missing_workflow_models(
+    runtime_root: Path,
+    manifest: ModelManifest,
+    workflow_id: str,
+) -> list[ModelEntry]:
+    """指定ワークフローに必要だが未配置のモデルを返す。"""
+    missing = []
+    for m in workflow_models(manifest, workflow_id):
+        if not m.required or m.required_manual:
+            continue
+        if not (runtime_root / m.target).exists():
+            missing.append(m)
+    return missing
+
+
+async def install_specific_models(
+    runtime_root: Path,
+    models: list[ModelEntry],
+    progress_cb: ProgressCallback | None = None,
+) -> None:
+    """指定したモデル群をDLする (オンデマンドDL用)。既に正しく存在する物はスキップ。"""
+    to_download: list[ModelEntry] = []
+    for model in models:
+        if not model.required:
+            continue
+        target = runtime_root / model.target
+        if target.exists():
+            try:
+                verify_sha256(target, model.sha256)
+                logger.info("モデル確認OK: %s", model.name)
+                continue
+            except Exception:
+                logger.warning("SHA256不一致。再DLします: %s", model.name)
+        if model.required_manual:
+            logger.warning("手動配置が必要なモデル: %s → %s", model.name, model.target)
+            continue
+        if not model.is_downloadable:
+            logger.warning("DL不可モデル (source_url未設定): %s", model.name)
+            continue
+        to_download.append(model)
+
+    total_files = len(to_download)
+    for idx, model in enumerate(to_download, start=1):
+        logger.info("モデルDL開始 (オンデマンド): %s", model.name)
+
+        def _cb(downloaded: int, total: int, name: str = model.name, idx: int = idx, total_files: int = total_files) -> None:
+            if progress_cb:
+                progress_cb(name, downloaded, total, idx, total_files)
+
+        await download_file(
+            model.source_url,
+            runtime_root / model.target,
+            sha256=model.sha256,
+            progress_cb=_cb,
+        )
+
+
 def check_required_models_present(
     runtime_root: Path,
     manifest: ModelManifest,

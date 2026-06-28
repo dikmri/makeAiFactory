@@ -19,11 +19,14 @@ class ModelEntry:
     # presets が空 → 常に必要な共有モデル
     # presets に値 → 該当プリセットのみに必要
     presets: list[str] = field(default_factory=list)
+    # workflows が非空 → 該当ワークフローを選択したときだけオンデマンドでDLするモデル。
+    # セットアップ時の自動DL対象からは外れる (is_shared=False)。
+    workflows: list[str] = field(default_factory=list)
 
     @property
     def is_shared(self) -> bool:
-        """プリセットに関わらず常に必要な共有モデル。"""
-        return len(self.presets) == 0
+        """プリセット・ワークフローに関わらず常に必要な共有モデル。"""
+        return len(self.presets) == 0 and len(self.workflows) == 0
 
     @property
     def is_downloadable(self) -> bool:
@@ -113,6 +116,7 @@ class ModelManifest:
                 license=m.get("license", ""),
                 note=m.get("note", ""),
                 presets=m.get("presets", []),
+                workflows=m.get("workflows", []),
             )
             for m in d["models"]
         ]

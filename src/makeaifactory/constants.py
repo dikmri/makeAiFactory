@@ -63,3 +63,27 @@ MODEL_PRESETS: dict[str, dict] = {
     },
 }
 _VALID_PRESETS = set(MODEL_PRESETS.keys())
+
+# ── ワークフロープリセット ────────────────────────────────────────────────────
+# 設定メニューの「ワークフロー」で選択する生成ワークフローの種類。
+# source は app/workflow/presets/ 配下の API版ワークフローJSON。選択時にサニタイズ
+# して runtime_template を再生成する。label / desc は i18n の原文キー。
+WORKFLOW_PRESETS: dict[str, dict] = {
+    "default": {
+        "label": "通常",
+        "desc":  "標準の動画生成",
+        "source": "default.json",
+    },
+    "pai": {
+        "label": "パイズリ",
+        "desc":  "パイズリ向けLoRA・プロンプト構成",
+        "source": "pai.json",
+    },
+    "fe": {
+        "label": "フェラ",
+        "desc":  "フェラ向けLoRA・プロンプト構成",
+        "source": "fe.json",
+    },
+}
+_VALID_WORKFLOWS = set(WORKFLOW_PRESETS.keys())
+DEFAULT_WORKFLOW = "default"
