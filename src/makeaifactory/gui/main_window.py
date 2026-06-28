@@ -181,6 +181,13 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        self._workflow_menu = menu_bar.addMenu(tr("ワークフロー"))
+        self._workflow_group = QActionGroup(self)
+        self._workflow_group.setExclusive(True)
+        self._workflow_actions: dict[str, QAction] = {}
+        self._workflow_change_callback = None
+        self._build_workflow_menu(active_workflow="default")
+
         settings_menu = menu_bar.addMenu(tr("設定"))
         change_loc_action = QAction(tr("インストール場所を変更..."), self)
         change_loc_action.triggered.connect(self._change_install_location)
@@ -212,14 +219,6 @@ class MainWindow(QMainWindow):
         self._preset_change_callback = None
         self._preset_add_callback = None
         self._rebuild_preset_menu(installed_presets=["normal"], active_preset="normal")
-
-        settings_menu.addSeparator()
-        self._workflow_menu = settings_menu.addMenu(tr("ワークフロー"))
-        self._workflow_group = QActionGroup(self)
-        self._workflow_group.setExclusive(True)
-        self._workflow_actions: dict[str, QAction] = {}
-        self._workflow_change_callback = None
-        self._build_workflow_menu(active_workflow="default")
 
         settings_menu.addSeparator()
         vram_menu = settings_menu.addMenu(tr("VRAMモード"))

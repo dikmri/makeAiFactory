@@ -160,6 +160,7 @@
   "モデルDL中: {name}": "Model downloading: {name}",
   "モデルをダウンロードしています（時間がかかります）...": "Downloading model (takes time)...",
   "モデルプリセット": "model preset",
+  "ワークフロー": "workflow",
   "モデルプリセットを変更しました": "Changed model preset",
   "ランダム": "random",
   "ログを開く": "open log",
