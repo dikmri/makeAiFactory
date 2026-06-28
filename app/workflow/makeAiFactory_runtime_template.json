@@ -1,7 +1,7 @@
 {
   "6": {
     "inputs": {
-      "sage_attention": "disabled",
+      "sage_attention": "auto",
       "allow_compile": false,
       "model": [
         "220",
@@ -15,7 +15,7 @@
   },
   "7": {
     "inputs": {
-      "sage_attention": "disabled",
+      "sage_attention": "auto",
       "allow_compile": false,
       "model": [
         "221",
@@ -159,7 +159,7 @@
   },
   "48": {
     "inputs": {
-      "value": "A man and woman are having sex. The man is thrusting his penis in and out of her vagina. She is reaching orgasm.\nHer breasts are large and bounce well.\n\nnsfwsks.\npenis goes in and out of vagina,\n\nThe woman's skin is coated with clear oil, glistening and reflecting light. The woman's skin has a fine texture and is very beautiful.\n\nVery precise and realistic effects."
+      "value": "女性がベッドの上で男性のペニスを自身の大きな胸で挟んで上下に胸を動かし刺激している。パイズリ。, \n\ntitJob, paizuri, \n\na woman uses her breasts to titfuck a man., \nshe is kneeling between his thighs., \n\n女性の肌には透明なオイルが塗られていて、テカテカと光を反射している。女性の肌はきめ細かく非常に綺麗だ。, \n\nとても精密でリアルなエフェクト。, "
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -168,7 +168,7 @@
   },
   "51": {
     "inputs": {
-      "value": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走, \n\nworst quality, low quality, lowres, low resolution, blurry, out of focus, pixelated, jpeg artifacts, compression artifacts, artifacts, digital noise, noise, static, grainy, oversharpened, color banding, posterization, chromatic aberration, watermark, logo, text, caption, subtitles, signature, writing, duplicate, out of frame, cluttered background, many people in the background, still frame, morbid, mutilated, deformed, disfigured, mutation, ugly, incomplete, bad anatomy, bad proportions, malformed limbs, extra limbs, missing limbs, three legs, mutated hands, bad hands, poorly drawn hands, extra fingers, missing fingers, fused fingers, too many fingers, poorly drawn face, bad eyes, deformed iris, deformed pupils, crossed eyes, lazy eye, cloned face, long neck, plastic skin, walking backwards, phone, smartphone, \n\nsketch, picture, \n\noverexposed, overexposure, underexposed, poorly lit, washed out, dull colors, oversaturated, undersaturated, over-contrasted, crushed blacks, blown highlights, white clipping, black clipping, vibrant tones, overall grayish tone, \n\nmotion blur, soft focus, bokeh, shallow depth of field, blurry background, \n\nskin blemishes, skin imperfections, acne, scars, pores, blotchy skin, oily skin, greasy skin, dirty, dirt, mud, wrinkles, creases, red lips, effect, Cartoony Effects, Excessive effects, Unrealistic effects, Low quality effects, \n\nLarge amounts of liquid, Spitting liquid from the mouth, \n\nShake a man's chest, black belt, "
+      "value": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走, \n\nworst quality, low quality, lowres, low resolution, blurry, out of focus, pixelated, jpeg artifacts, compression artifacts, artifacts, digital noise, noise, static, grainy, oversharpened, color banding, posterization, chromatic aberration, watermark, logo, text, caption, subtitles, signature, writing, duplicate, out of frame, cluttered background, many people in the background, still frame, morbid, mutilated, deformed, disfigured, mutation, ugly, incomplete, bad anatomy, bad proportions, malformed limbs, extra limbs, missing limbs, three legs, mutated hands, bad hands, poorly drawn hands, extra fingers, missing fingers, fused fingers, too many fingers, poorly drawn face, bad eyes, deformed iris, deformed pupils, crossed eyes, lazy eye, cloned face, long neck, plastic skin, walking backwards, phone, smartphone, \n\nsketch, picture, \n\noverexposed, overexposure, underexposed, poorly lit, washed out, dull colors, oversaturated, undersaturated, over-contrasted, crushed blacks, blown highlights, white clipping, black clipping, vibrant tones, overall grayish tone, \n\nmotion blur, soft focus, bokeh, shallow depth of field, blurry background, \n\nskin blemishes, skin imperfections, acne, scars, pores, blotchy skin, oily skin, greasy skin, dirty, dirt, mud, wrinkles, creases, red lips, effect, Cartoony Effects, Excessive effects, Unrealistic effects, Low quality effects, \n\nLarge amounts of liquid, Spitting liquid from the mouth, \n\nShake a man's chest, \nlipstick., "
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -505,7 +505,12 @@
       "lora_3": {
         "on": true,
         "lora": "slop_twerk_HighNoise_merged3_7_v2.safetensors",
-        "strength": 0.6
+        "strength": 0.3
+      },
+      "lora_4": {
+        "on": true,
+        "lora": "WAN-2.2-I2V-POV-Titfuck-Paizuri-HIGH-v1.0.safetensors",
+        "strength": 1
       },
       "➕ Add Lora": "",
       "model": [
@@ -536,7 +541,12 @@
       "lora_3": {
         "on": true,
         "lora": "slop_twerk_LowNoise_merged3_7_v2.safetensors",
-        "strength": 0.4
+        "strength": 0.15
+      },
+      "lora_4": {
+        "on": true,
+        "lora": "WAN-2.2-I2V-POV-Titfuck-Paizuri-LOW-v1.0.safetensors",
+        "strength": 0.7
       },
       "➕ Add Lora": "",
       "model": [
@@ -650,7 +660,7 @@
   },
   "251": {
     "inputs": {
-      "seed": 832760963001022
+      "seed": 391362308997465
     },
     "class_type": "easy seed",
     "_meta": {
@@ -824,7 +834,7 @@
   },
   "295": {
     "inputs": {
-      "unet_name": "Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf"
+      "unet_name": "easywan22Fastmix_highQ4KM.gguf"
     },
     "class_type": "UnetLoaderGGUF",
     "_meta": {

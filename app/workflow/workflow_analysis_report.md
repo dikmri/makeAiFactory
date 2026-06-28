@@ -1,67 +1,10 @@
 # workflow_analysis_report
 
-## 元ノード数: 109
-## 保持ノード数: 52
-## 除去ノード数: 57
+## 元ノード数: 51
+## 保持ノード数: 51
+## 除去ノード数: 0
 
 ## 除去されたノード
-- 129: VHS_VideoCombine (Save Video - Base)
-- 149: easy mathInt (Calculate Interpolated Framerate)
-- 159: String to Float (Convert INT FPS to Float)
-- 160: SomethingToString (Convert INT FPS to String)
-- 239: Int (Video Frame Multiplier (Interpolation))
-- 298: easy loadImagesForLoop (Load Images For Loop)
-- 300: easy imageSwitch (フォルダ読み込み = true / 直接指定 = false)
-- 301: PreviewImage (フォルダ読み込み画像プレビュー)
-- 320: StringConcatenate (連結)
-- 325: easy imagesCountInDirectory (imagesCountInDirectory)
-- 333: Display Any (rgthree) (フォルダ総数)
-- 334: easy mathInt (Math Int)
-- 337: Display Any (rgthree) (残り数)
-- 338: easy promptConcat (easy promptConcat)
-- 339: easy promptConcat (easy promptConcat)
-- 341: DF_Text_Box (Text Box)
-- 344: easy promptConcat (easy promptConcat)
-- 348: CR Integer To String (総数文字列変換)
-- 351: CR Integer To String (残り文字列変換)
-- 352: DF_Text_Box (Text Box)
-- 355: HTMLRendererNode (総数カウンター (HTML Renderer))
-- 356: DF_Text_Box (Text Box)
-- 357: DF_Text_Box (Text Box)
-- 358: easy promptConcat (easy promptConcat)
-- 359: easy promptConcat (easy promptConcat)
-- 360: Display Any (rgthree) (完成html)
-- 361: DF_Text_Box (元画像フォルダ指定)
-- 380: Post Request Node (残り枚数スマホ通知)
-- 381: DF_Text_Box (送信内容)
-- 383: easy mathInt (残数計算)
-- 384: Display Any (rgthree) (完了数)
-- 385: easy mathInt (パーセント計算)
-- 386: easy promptConcat (easy promptConcat)
-- 387: easy mathInt (パーセント出力)
-- 388: TextBoxMira (Text Box)
-- 389: CR Integer To String (総数文字列変換)
-- 391: easy promptConcat (easy promptConcat)
-- 392: Display Any (rgthree) (最終仮出力先)
-- 393: Display Any (rgthree) (残数 / 総数 確認)
-- 394: Display Any (rgthree) (パーセント計算 確認)
-- 396: Display Any (rgthree) (残数?)
-- 397: Display Any (rgthree) (総数?)
-- 398: DF_Int_to_Float (Int to Float)
-- 400: DF_Int_to_Float (Int to Float)
-- 401: easy mathFloat (Math Float)
-- 402: Display Any (rgthree) (残数 / 総数 確認 float)
-- 403: easy mathFloat (Math Float)
-- 404: Display Any (rgthree) (残数 / 総数元 確認 float)
-- 406: easy promptConcat (easy promptConcat)
-- 407: easy promptConcat (easy promptConcat)
-- 408: TextBoxMira (Text Box)
-- 409: TextBoxMira (Text Box)
-- 410: Display Any (rgthree) (最終仮出力先 Float)
-- 411: CR Float To String (🔧 CR Float To String)
-- 412: Display Any (rgthree) (念のための途中確認)
-- 413: easy promptConcat (easy promptConcat)
-- 414: Display Any (rgthree) (事前の値の確認)
 
 ## 保持class_type一覧
 - CFGZeroStarAndInit: ノード 21, 22
@@ -70,7 +13,6 @@
 - CLIPVisionEncode: ノード 196
 - CLIPVisionLoader: ノード 194
 - Float: ノード 248, 250
-- GoogleTranslateTextNode: ノード 297
 - ImageRemoveAlpha+: ノード 206
 - ImageScale: ノード 181
 - ImageUpscaleWithModel: ノード 167
