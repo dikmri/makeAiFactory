@@ -17,6 +17,8 @@
 
 > 画像をドラッグ＆ドロップするだけで、ローカルPCがAI動画工場に変わる。
 
+<p align="center"><img src="assets/screenshot_ja.png" width="440" alt="makeAiFactory スクリーンショット"></p>
+
 **makeAiFactory** は、AIで画像を動画に変換するアプリケーションです。  
 ComfyUI と Wan 2.2 モデルを自動でセットアップし、難しい設定なしに高品質なAI動画を生成できます。  
 

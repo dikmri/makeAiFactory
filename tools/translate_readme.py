@@ -63,6 +63,15 @@ def translate_markdown(text: str, target_code: str) -> str:
     return "\n".join(out)
 
 
+# README.md に置くスクリーンショットは日本語UI版 (screenshot_ja.png)。
+# 各言語版では対応するUI言語のスクショ (screenshot_<lang>.png) へ差し替える。
+_SCREENSHOT_JA = "assets/screenshot_ja.png"
+
+
+def _localize_screenshot(text: str, lang: str) -> str:
+    return text.replace(_SCREENSHOT_JA, f"assets/screenshot_{lang}.png")
+
+
 def main() -> None:
     text = SRC.read_text(encoding="utf-8")
     body = _LANG_LINKS_PATTERN.sub("", text)
@@ -73,6 +82,7 @@ def main() -> None:
     for lang, (target_code, filename) in TARGETS.items():
         print(f"[{lang}] 翻訳中...")
         translated = translate_markdown(body, target_code)
+        translated = _localize_screenshot(translated, lang)
         out_path = ROOT / filename
         out_path.write_text(_LANG_LINKS + translated, encoding="utf-8")
         print(f"[{lang}] 完了 -> {filename}")

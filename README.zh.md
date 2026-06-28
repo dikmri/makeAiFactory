@@ -17,6 +17,8 @@
 
 > 只需拖放图像，即可将本地 PC 变成 AI 视频工厂。
 
+<p align="center"><img src="assets/screenshot_zh.png" width="440" alt="makeAiFactory 屏幕截图"></p>
+
 **makeAiFactory**是一款使用人工智能将图像转换为视频的应用程序。
 您可以自动设置ComfyUI和Wan 2.2模型来生成高质量的AI视频，无需进行困难的设置。
 

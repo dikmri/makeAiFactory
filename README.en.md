@@ -17,6 +17,8 @@
 
 > Turn your local PC into an AI video factory by simply dragging and dropping images.
 
+<p align="center"><img src="assets/screenshot_en.png" width="440" alt="makeAiFactory screenshot"></p>
+
 **makeAiFactory** is an application that converts images into videos using AI.
 You can automatically set up ComfyUI and Wan 2.2 models to generate high-quality AI videos without difficult settings.
 
