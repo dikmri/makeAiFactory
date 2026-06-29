@@ -35,8 +35,12 @@ async def validate_upload(
         return b"", "INVALID_FILE_TYPE"
 
     w, h = img.size
-    if w > max_px or h > max_px or w * h > _MAX_TOTAL_PIXELS:
-        return b"", "IMAGE_TOO_LARGE"
+    # 大きすぎる画像はエラーにせず、制限に収まるよう縮小する
+    # (ブラウザ連携などで高解像度画像をそのまま受け取れるようにするため)
+    from PIL import Image as _Image
+    scale = min(max_px / w, max_px / h, (_MAX_TOTAL_PIXELS / (w * h)) ** 0.5, 1.0)
+    if scale < 1.0:
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), _Image.LANCZOS)
 
     output = io.BytesIO()
     clean = img.convert("RGB")

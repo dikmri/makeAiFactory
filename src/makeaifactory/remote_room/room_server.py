@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import secrets
 import socket
 import uuid
 from dataclasses import dataclass, field
@@ -58,6 +59,7 @@ class RemoteJob:
     completed_at: datetime | None = None
     error_message: str | None = None
     video_url: str | None = None
+    workflow: str | None = None   # ブラウザ連携で指定された生成ワークフロー (None=既定)
 
     def to_api_dict(self, queue_position: int = 0) -> dict:
         return {
@@ -241,6 +243,45 @@ class RoomServer:
             }),
         )
 
+    # ── ルート: GET /api/workflows (ブラウザ連携用。利用可能なワークフロー一覧) ──
+
+    async def _handle_workflows(self, request) -> object:
+        from aiohttp import web
+        from ..constants import WORKFLOW_PRESETS
+        # ローカルブリッジ起動時に templates/<wf>.json を生成済みのものだけ返す
+        job_base = Path(getattr(self._config, "_job_base_dir", "") or ".")
+        templates_dir = job_base.parent / "templates"
+        items = []
+        for key, info in WORKFLOW_PRESETS.items():
+            if (templates_dir / f"{key}.json").exists():
+                items.append({
+                    "key": key,
+                    "label": info.get("label", key),
+                    "desc": info.get("desc", ""),
+                })
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"workflows": items}, ensure_ascii=False),
+        )
+
+    # ── ルート: GET /userscript.user.js (Tampermonkeyスクリプトを配信) ──────────
+
+    async def _handle_userscript(self, request) -> object:
+        from aiohttp import web
+        tpl = self._static_dir / "userscript.user.js"
+        if not tpl.exists():
+            raise web.HTTPNotFound()
+        port = request.url.port or self._config.local_port or 0
+        token = getattr(self._config, "local_token", "") or ""
+        script = tpl.read_text(encoding="utf-8")
+        script = script.replace("__MAF_PORT__", str(port)).replace("__MAF_TOKEN__", token)
+        return web.Response(
+            text=script,
+            content_type="application/javascript",
+            charset="utf-8",
+            headers={"Content-Disposition": "inline; filename=makeaifactory.user.js"},
+        )
+
     # ── ルート: POST /api/jobs ────────────────────────────────────────────────
 
     async def _handle_create_job(self, request) -> object:
@@ -249,25 +290,32 @@ class RoomServer:
         if not self._accepting_ref[0]:
             return self._make_error_response("ROOM_STOPPED", 503)
 
-        # セッション確認
-        session_id = request.cookies.get("maf_room_session")
-        session = self._auth.get_session(session_id)
-        if session is None:
-            return self._make_error_response("SESSION_EXPIRED", 401)
+        # === 認証: ブラウザ連携(固定トークン) か、通常のセッション+CSRF か ===
+        local_token = getattr(self._config, "local_token", None)
+        req_token = request.headers.get("X-MAF-Local-Token", "")
+        is_local = bool(local_token) and secrets.compare_digest(req_token, str(local_token))
 
-        # CSRF 確認
-        csrf = request.headers.get("X-MAF-CSRF", "")
-        if not self._auth.validate_csrf(session_id, csrf):
-            return self._make_error_response("SESSION_EXPIRED", 403)
+        if is_local:
+            session_id = None
+            session = None
+            rate_key = "local"
+        else:
+            session_id = request.cookies.get("maf_room_session")
+            session = self._auth.get_session(session_id)
+            if session is None:
+                return self._make_error_response("SESSION_EXPIRED", 401)
+            csrf = request.headers.get("X-MAF-CSRF", "")
+            if not self._auth.validate_csrf(session_id, csrf):
+                return self._make_error_response("SESSION_EXPIRED", 403)
+            rate_key = session.ip_hash
 
         # キューの混雑確認
         active = sum(1 for j in self._jobs.values() if j.status in ("queued", "running"))
         if active >= self._config.max_queue_size:
             return self._make_error_response("QUEUE_FULL", 429)
 
-        # レート制限確認
-        rate_key = session.ip_hash
-        if not self._limiter.is_allowed(rate_key):
+        # レート制限確認 (ブラウザ連携は自分のPCからの操作なので免除)
+        if not is_local and not self._limiter.is_allowed(rate_key):
             wait_sec = self._limiter.seconds_until_allowed(rate_key)
             return web.Response(
                 status=429,
@@ -279,17 +327,35 @@ class RoomServer:
                 }),
             )
 
-        # multipart アップロード受信
+        # multipart アップロード受信 (image + 任意の workflow フィールド。順序非依存)
+        filename = "upload.png"
+        image_data = None
+        workflow = None
         try:
             reader = await request.multipart()
-            field = await reader.next()
-            if field is None or field.name != "image":
-                return self._make_error_response("INVALID_FILE_TYPE", 400)
-            filename = field.filename or "upload.png"
-            image_data = await field.read(decode=True)
+            while True:
+                field = await reader.next()
+                if field is None:
+                    break
+                if field.name == "image":
+                    filename = field.filename or "upload.png"
+                    image_data = await field.read(decode=True)
+                elif field.name == "workflow":
+                    workflow = (await field.text()).strip() or None
         except Exception as e:
             logger.warning("multipart 読み込みエラー: %s", e)
             return self._make_error_response("INVALID_FILE_TYPE", 400)
+        if image_data is None:
+            return self._make_error_response("INVALID_FILE_TYPE", 400)
+
+        # ワークフロー名の検証 (不正値は既定にフォールバック)
+        if workflow is not None:
+            from ..constants import _VALID_WORKFLOWS
+            if workflow not in _VALID_WORKFLOWS:
+                logger.warning("不正なworkflow指定を無視: %r", workflow)
+                workflow = None
+        if is_local:
+            logger.info("ローカルブリッジ ジョブ受付: workflow=%s file=%s", workflow or "(既定)", filename)
 
         # 画像検証 + サニタイズ
         from .upload_validator import validate_upload
@@ -301,12 +367,16 @@ class RoomServer:
             self._config.allowed_extensions,
         )
         if err:
+            head = bytes(image_data or b"")[:80]
+            logger.warning("画像検証で却下: code=%s file=%s size=%dB head=%r",
+                           err, filename, len(image_data or b""), head)
             return self._make_error_response(err, 400)
 
         # ジョブ作成
         job = RemoteJob(
             session_id=session_id or "",
-            ip_hash=session.ip_hash,
+            ip_hash=session.ip_hash if session else "local",
+            workflow=workflow,
         )
 
         # 入力画像を保存
@@ -317,8 +387,9 @@ class RoomServer:
         job.image_path = str(input_path)
 
         self._jobs[job.job_id] = job
-        self._limiter.record_job(rate_key)
-        self._auth.record_job(session_id or "")
+        if not is_local:
+            self._limiter.record_job(rate_key)
+            self._auth.record_job(session_id or "")
 
         await self._job_queue.put(job.job_id)
         position = self._get_queue_position(job.job_id)
@@ -438,6 +509,8 @@ class RoomServer:
         app.router.add_get("/static/{filename}", self._handle_static)
         app.router.add_post("/api/auth", self._handle_auth)
         app.router.add_get("/api/room", self._handle_room_info)
+        app.router.add_get("/api/workflows", self._handle_workflows)
+        app.router.add_get("/userscript.user.js", self._handle_userscript)
         app.router.add_post("/api/jobs", self._handle_create_job)
         app.router.add_get("/api/jobs/{job_id}", self._handle_get_job)
         app.router.add_get("/api/jobs/{job_id}/video", self._handle_get_video)

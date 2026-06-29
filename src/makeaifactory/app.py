@@ -61,6 +61,7 @@ from .gui.first_run_dialog import FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
 from .gui.main_window import MainWindow
 from .gui.remote_room_dialog import RemoteRoomDialog, make_qr_pixmap
+from .gui.local_bridge_dialog import LocalBridgeDialog
 from .remote_room.controller import RemoteRoomController
 from .remote_room.room_config import RemoteRoomConfig
 
@@ -501,6 +502,7 @@ def run_app() -> int:
 
     # Remote Room コントローラ
     _remote_room: dict = {"ctrl": None, "dlg": None, "generating": False}
+    _local_bridge: dict = {"dlg": None}
 
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
@@ -812,6 +814,46 @@ def run_app() -> int:
         dlg.raise_()
         dlg.activateWindow()
 
+    def _on_local_bridge_requested() -> None:
+        dlg = _local_bridge.get("dlg")
+        if dlg is None:
+            dlg = LocalBridgeDialog(window)
+            _local_bridge["dlg"] = dlg
+
+            def _handle_toggle(enabled: bool) -> None:
+                try:
+                    if enabled:
+                        token = ctrl.start_local_bridge()
+                        if not _local_bridge.get("connected"):
+                            sig = ctrl.local_bridge_signals
+                            if sig is not None:
+                                sig.job_started.connect(_on_bridge_job_started,   Qt.ConnectionType.QueuedConnection)
+                                sig.job_progress.connect(_on_bridge_job_progress, Qt.ConnectionType.QueuedConnection)
+                                sig.job_done.connect(_on_bridge_job_done,         Qt.ConnectionType.QueuedConnection)
+                                sig.job_error.connect(_on_bridge_job_error,       Qt.ConnectionType.QueuedConnection)
+                                _local_bridge["connected"] = True
+                        dlg.set_active(True, ctrl.local_bridge_port, token)
+                    else:
+                        ctrl.stop_local_bridge()
+                        dlg.set_active(False, ctrl.local_bridge_port, "")
+                except Exception as e:  # noqa: BLE001
+                    logger.exception("ブラウザ連携の切替に失敗")
+                    dlg.set_active(
+                        ctrl.is_local_bridge_running, ctrl.local_bridge_port,
+                        settings.local_bridge_token if ctrl.is_local_bridge_running else "",
+                    )
+                    QMessageBox.warning(window, tr("エラー"), tr("エラー: {e}").format(e=e))
+
+            dlg.set_toggle_callback(_handle_toggle)
+
+        dlg.set_active(
+            ctrl.is_local_bridge_running, ctrl.local_bridge_port,
+            settings.local_bridge_token if ctrl.is_local_bridge_running else "",
+        )
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
     @Slot(str, str)
     def _on_remote_job_started(job_id: str, image_path: str) -> None:
         _remote_room["generating"] = True
@@ -850,6 +892,49 @@ def run_app() -> int:
         window.show_drop_page()
         window.update_status(tr("🌐 投入口 生成エラー: {msg}").format(msg=msg))
         logger.error("Remote Room ジョブエラー: %s — %s", job_id, msg)
+
+    # ── ブラウザ連携 (ローカルブリッジ) のジョブ反映。完成動画はアプリ側で自動保存 ──
+
+    @Slot(str, str)
+    def _on_bridge_job_started(job_id: str, image_path: str) -> None:
+        _local_bridge["generating"] = True
+        write_bot_state(paths.runtime_root, "single")
+        window.enter_single_mode(Path(image_path))
+        window.update_single_progress(
+            tr("🖥 ブラウザ連携 生成中: #{job_id}").format(job_id=job_id[:6]), 0.0, -1.0)
+        logger.info("ブラウザ連携 ジョブ開始: %s", job_id)
+
+    @Slot(str, float, str)
+    def _on_bridge_job_progress(job_id: str, pct: float, label: str) -> None:
+        if _local_bridge.get("generating"):
+            window.update_single_progress(label, pct, pct)
+
+    @Slot(str, str)
+    def _on_bridge_job_done(job_id: str, output_path: str) -> None:
+        _local_bridge["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        auto_folder = settings.auto_save_folder
+        if settings.auto_save_enabled and auto_folder:
+            try:
+                dest_dir = Path(auto_folder)
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(output_path), str(dest_dir / f"bridge_{job_id}.mp4"))
+                logger.info("ブラウザ連携 自動保存: %s", dest_dir / f"bridge_{job_id}.mp4")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ブラウザ連携 自動保存に失敗: %s", e)
+        window.show_result(Path(output_path))
+        _play_complete_se()
+        logger.info("ブラウザ連携 ジョブ完了: %s → %s", job_id, output_path)
+
+    @Slot(str, str)
+    def _on_bridge_job_error(job_id: str, msg: str) -> None:
+        _local_bridge["generating"] = False
+        write_bot_state(paths.runtime_root, "idle")
+        window.stop_elapsed_timer()
+        window.hide_cancel_btn()
+        window.show_drop_page()
+        window.update_status(tr("🖥 ブラウザ連携 生成エラー: {msg}").format(msg=msg))
+        logger.error("ブラウザ連携 ジョブエラー: %s — %s", job_id, msg)
 
     @Slot()
     def _on_dev_mode_requested() -> None:
@@ -1182,6 +1267,7 @@ def run_app() -> int:
     window.discord_settings_requested.connect(_on_discord_settings_requested, Qt.ConnectionType.QueuedConnection)
     window.dev_mode_requested.connect(_on_dev_mode_requested,    Qt.ConnectionType.QueuedConnection)
     window.remote_room_requested.connect(_on_remote_room_requested, Qt.ConnectionType.QueuedConnection)
+    window.local_bridge_requested.connect(_on_local_bridge_requested, Qt.ConnectionType.QueuedConnection)
 
     window.show_progress_indeterminate(tr("セットアップを確認しています..."))
     window.show()

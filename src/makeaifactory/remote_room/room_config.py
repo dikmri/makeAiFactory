@@ -8,6 +8,8 @@ class RemoteRoomConfig:
     enabled: bool = False
     local_host: str = "127.0.0.1"
     local_port: int | None = None          # None = 自動選択
+    tunnel_enabled: bool = True             # False = トンネルを張らずローカルのみ待受(ブラウザ連携用)
+    local_token: str | None = None          # ローカルAPI認証トークン(ブラウザ連携用。設定時 session/CSRF を免除)
     room_ttl_minutes: int = 180
     require_pin: bool = True
     max_upload_mb: int = 20

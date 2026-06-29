@@ -56,6 +56,7 @@ class AppController:
         self._server: ComfyServerController | None = None
         self._job_ctrl: JobController | None = None
         self._system_info: SystemInfo | None = None
+        self._local_bridge = None  # RemoteRoomController | None (ブラウザ連携)
 
     def _load_runtime_manifest(self) -> RuntimeManifest:
         with self._paths.runtime_manifest_json().open("r", encoding="utf-8") as f:
@@ -300,6 +301,93 @@ class AppController:
         )
         self.reload_workflow_template()
         logger.info("ワークフロー切替: %s (%s)", workflow_id, info["source"])
+
+    # ── ブラウザ連携 (ローカルブリッジ / Tampermonkey) ───────────────────────────
+
+    def _build_local_bridge_templates(self) -> list[str]:
+        """利用可能な各ワークフローをサニタイズして templates/<wf>.json に生成する。
+
+        モデル/LoRAが揃っているワークフローのみ生成し、生成できたキーの一覧を返す。
+        ブラウザ側の `/api/workflows` は、ここで生成されたものだけを選択肢に出す。
+        """
+        from ..comfy.workflow_sanitizer import load_and_sanitize
+        from ..constants import WORKFLOW_PRESETS
+        from ..runtime.model_installer import get_missing_workflow_models
+        manifest = self._load_model_manifest()
+        templates_dir = self._paths.runtime_root / "remote_room" / "templates"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        built: list[str] = []
+        for key, info in WORKFLOW_PRESETS.items():
+            try:
+                missing = get_missing_workflow_models(self._paths.runtime_root, manifest, key)
+            except Exception:
+                missing = []
+            if missing:
+                logger.info("ローカルブリッジ: %s はモデル未DLのためスキップ", key)
+                continue
+            src = self._paths.workflow_preset_json(info["source"])
+            if not src.exists():
+                continue
+            try:
+                load_and_sanitize(src, templates_dir / f"{key}.json")
+                built.append(key)
+            except Exception:
+                logger.exception("ローカルブリッジ: %s のテンプレート生成に失敗", key)
+        logger.info("ローカルブリッジ テンプレート生成: %s", built)
+        return built
+
+    def start_local_bridge(self) -> str:
+        """ブラウザ連携サーバーを起動し、ローカルAPIトークンを返す (冪等)。"""
+        import secrets
+        from ..constants import LOCAL_BRIDGE_PORT
+        from ..remote_room.controller import RemoteRoomController
+        from ..remote_room.room_config import RemoteRoomConfig
+
+        token = self._settings.local_bridge_token
+        if not token:
+            token = secrets.token_urlsafe(24)
+            self._settings.set_local_bridge_token(token)
+
+        self._build_local_bridge_templates()
+
+        if self._local_bridge is None:
+            self._local_bridge = RemoteRoomController(self._settings, self._paths)
+        if not self._local_bridge.is_running:
+            cfg = RemoteRoomConfig(
+                enabled=True,
+                local_port=LOCAL_BRIDGE_PORT,
+                tunnel_enabled=False,
+                require_pin=False,
+                local_token=token,
+                # 自分のPCからの操作なので、ブラウザ上の高解像度画像も受けられるよう緩める
+                # (超過分は upload_validator がサーバー側で縮小する)
+                max_upload_mb=100,
+                max_image_px=8192,
+            )
+            self._local_bridge.start(cfg)
+            logger.info("ローカルブリッジ起動: port=%d", LOCAL_BRIDGE_PORT)
+        self._settings.set_local_bridge_enabled(True)
+        return token
+
+    def stop_local_bridge(self) -> None:
+        if self._local_bridge is not None and self._local_bridge.is_running:
+            self._local_bridge.stop()
+        self._settings.set_local_bridge_enabled(False)
+        logger.info("ローカルブリッジ停止")
+
+    @property
+    def is_local_bridge_running(self) -> bool:
+        return self._local_bridge is not None and self._local_bridge.is_running
+
+    @property
+    def local_bridge_signals(self):
+        """ローカルブリッジのジョブ進捗シグナル (未起動なら None)。"""
+        return self._local_bridge.signals if self._local_bridge is not None else None
+
+    @property
+    def local_bridge_port(self) -> int:
+        from ..constants import LOCAL_BRIDGE_PORT
+        return LOCAL_BRIDGE_PORT
 
     def get_job_controller(self) -> JobController:
         if self._job_ctrl is None:

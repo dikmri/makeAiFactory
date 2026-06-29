@@ -14,6 +14,11 @@ COMFY_HOST = "127.0.0.1"
 COMFY_PORT_RANGE = (17860, 17960)
 COMFY_STARTUP_TIMEOUT = 300
 
+# ローカルブリッジ(ブラウザ連携: Tampermonkey)用の固定ポート。
+# ブラウザのユーザースクリプトが固定URLで到達できるよう、ComfyUI(17860-17960)と
+# 衝突しない範囲の固定値を使う。
+LOCAL_BRIDGE_PORT = 17970
+
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 VRAM_MINIMUM_GB = 8          # 低VRAMモード最低要件 (これ未満は警告のみで続行)

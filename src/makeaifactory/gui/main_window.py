@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
     discord_settings_requested = Signal()
     dev_mode_requested = Signal()
     remote_room_requested = Signal()
+    local_bridge_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -271,6 +272,10 @@ class MainWindow(QMainWindow):
         remote_room_action = QAction(tr("インターネット投入口 β..."), self)
         remote_room_action.triggered.connect(self.remote_room_requested)
         settings_menu.addAction(remote_room_action)
+
+        browser_bridge_action = QAction(tr("ブラウザ連携 (Tampermonkey)..."), self)
+        browser_bridge_action.triggered.connect(self.local_bridge_requested)
+        settings_menu.addAction(browser_bridge_action)
 
         settings_menu.addSeparator()
         se_menu = settings_menu.addMenu(tr("完成通知音"))

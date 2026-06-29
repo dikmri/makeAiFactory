@@ -234,44 +234,53 @@ class RemoteRoomController:
             self._signals.error.emit(tr("ローカルサーバーの起動に失敗しました:\n{e}").format(e=e))
             return
 
-        # cloudflared バイナリを確保 (なければ自動ダウンロード)
-        from .cloudflared_installer import ensure_cloudflared
-
-        def _dl_progress(msg: str, pct: float) -> None:
-            self._signals.status_changed.emit("starting", msg)
-
-        try:
-            cloudflared_exe = await ensure_cloudflared(self._paths.runtime_root, _dl_progress)
-        except Exception as e:
-            self._signals.status_changed.emit("error", tr("cloudflared 取得失敗: {e}").format(e=e))
-            self._signals.error.emit(str(e))
-            await server.stop()
-            return
-
-        self._signals.status_changed.emit("starting", tr("トンネルを起動中..."))
-
-        # Tunnel
-        tunnel = TunnelManager()
-        public_url: str | None = None
-        try:
-            public_url = await tunnel.start(port, exe_path=cloudflared_exe)
-            self._signals.public_url_ready.emit(public_url, self._pin)
-            self._signals.status_changed.emit("running", tr("公開中: {public_url}").format(public_url=public_url))
-            logger.info("投入口 公開: %s (PIN: %s)", public_url, "あり" if self._pin else "なし")
-        except asyncio.TimeoutError:
-            err = tr(
-                "Cloudflare Quick Tunnel の起動に失敗しました。\n"
-                "ネットワーク接続、セキュリティソフト、会社/学校のネットワーク制限を確認してください。"
+        # === Tunnel(インターネット投入口)経路。ブラウザ連携(tunnel_enabled=False)では張らない ===
+        tunnel: TunnelManager | None = None
+        if not config.tunnel_enabled:
+            # ローカルブリッジ: トンネルを張らずローカルのみ待受 (ブラウザ連携用)
+            self._signals.status_changed.emit(
+                "running",
+                tr("ブラウザ連携: ローカル待受中 (127.0.0.1:{port})").format(port=port),
             )
-            self._signals.status_changed.emit("error", tr("Tunnel 起動タイムアウト"))
-            self._signals.error.emit(err)
-            await server.stop()
-            return
-        except Exception as e:
-            self._signals.status_changed.emit("error", tr("Tunnel エラー: {e}").format(e=e))
-            self._signals.error.emit(str(e))
-            await server.stop()
-            return
+            logger.info("ローカルブリッジ 待受開始: 127.0.0.1:%d", port)
+        else:
+            # cloudflared バイナリを確保 (なければ自動ダウンロード)
+            from .cloudflared_installer import ensure_cloudflared
+
+            def _dl_progress(msg: str, pct: float) -> None:
+                self._signals.status_changed.emit("starting", msg)
+
+            try:
+                cloudflared_exe = await ensure_cloudflared(self._paths.runtime_root, _dl_progress)
+            except Exception as e:
+                self._signals.status_changed.emit("error", tr("cloudflared 取得失敗: {e}").format(e=e))
+                self._signals.error.emit(str(e))
+                await server.stop()
+                return
+
+            self._signals.status_changed.emit("starting", tr("トンネルを起動中..."))
+
+            tunnel = TunnelManager()
+            public_url: str | None = None
+            try:
+                public_url = await tunnel.start(port, exe_path=cloudflared_exe)
+                self._signals.public_url_ready.emit(public_url, self._pin)
+                self._signals.status_changed.emit("running", tr("公開中: {public_url}").format(public_url=public_url))
+                logger.info("投入口 公開: %s (PIN: %s)", public_url, "あり" if self._pin else "なし")
+            except asyncio.TimeoutError:
+                err = tr(
+                    "Cloudflare Quick Tunnel の起動に失敗しました。\n"
+                    "ネットワーク接続、セキュリティソフト、会社/学校のネットワーク制限を確認してください。"
+                )
+                self._signals.status_changed.emit("error", tr("Tunnel 起動タイムアウト"))
+                self._signals.error.emit(err)
+                await server.stop()
+                return
+            except Exception as e:
+                self._signals.status_changed.emit("error", tr("Tunnel エラー: {e}").format(e=e))
+                self._signals.error.emit(str(e))
+                await server.stop()
+                return
 
         # ジョブワーカー + TTL 監視
         worker_task = asyncio.create_task(self._job_worker())
@@ -285,7 +294,8 @@ class RemoteRoomController:
         ttl_task.cancel()
         self._accepting[0] = False
 
-        await tunnel.stop()
+        if tunnel is not None:
+            await tunnel.stop()
         await server.stop()
 
         # 出力ファイルの保持期間を考慮 (入力画像のみ即時削除)
@@ -381,7 +391,19 @@ class RemoteRoomController:
         model_preset = self._settings.model_preset
         preset_def = MODEL_PRESETS.get(model_preset, MODEL_PRESETS["normal"])
 
+        # ジョブにワークフロー指定があれば、そのワークフロー用にサニタイズ済みの
+        # テンプレートを使う (ローカルブリッジ起動時に templates/<wf>.json へ生成済み)。
+        # 無ければアプリでアクティブな runtime_template にフォールバックする。
         template_path = self._paths.runtime_template_json()
+        if job.workflow:
+            wf_path = self._paths.runtime_root / "remote_room" / "templates" / f"{job.workflow}.json"
+            if wf_path.exists():
+                template_path = wf_path
+                logger.info("RemoteRoom ワークフロー指定: %s (%s)", job.workflow, wf_path.name)
+            else:
+                logger.warning(
+                    "RemoteRoom ワークフローテンプレート未生成: %s → 既定にフォールバック", job.workflow
+                )
         if not template_path.exists():
             raise FileNotFoundError(f"ワークフローテンプレートが見つかりません: {template_path}")
         with template_path.open(encoding="utf-8") as f:

@@ -37,6 +37,10 @@ _DEFAULTS = {
         "per_session_cooldown_seconds": 600,
         "output_retention_hours": 24,
     },
+    "local_bridge": {                # ブラウザ連携(Tampermonkey)
+        "enabled": False,            # ローカルブリッジサーバーを起動するか
+        "token": "",                 # ローカルAPI認証トークン(初回ONで自動生成)
+    },
 }
 
 
@@ -245,3 +249,27 @@ class SettingsStore:
 
     def set_remote_room_config(self, config: dict) -> None:
         self.set("remote_room", config)
+
+    @property
+    def local_bridge_config(self) -> dict:
+        """ブラウザ連携(Tampermonkey)の設定。"""
+        v = self.get("local_bridge")
+        return v if isinstance(v, dict) else {}
+
+    @property
+    def local_bridge_enabled(self) -> bool:
+        return bool(self.local_bridge_config.get("enabled"))
+
+    def set_local_bridge_enabled(self, enabled: bool) -> None:
+        cfg = dict(self.local_bridge_config)
+        cfg["enabled"] = bool(enabled)
+        self.set("local_bridge", cfg)
+
+    @property
+    def local_bridge_token(self) -> str:
+        return str(self.local_bridge_config.get("token") or "")
+
+    def set_local_bridge_token(self, token: str) -> None:
+        cfg = dict(self.local_bridge_config)
+        cfg["token"] = str(token)
+        self.set("local_bridge", cfg)
