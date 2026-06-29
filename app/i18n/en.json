@@ -323,5 +323,17 @@
   "🎛  ワークフローの全パラメーターを調整 (makeAiFactory_api_source.json)": "🎛 Adjust all workflow parameters (makeAiFactory_api_source.json)",
   "📱 スキャンして入室": "📱 Scan to enter",
   "📱 スキャンで入室 (PIN 自動入力)": "📱 Scan to enter (automatic PIN entry)",
-  "📱 スキャンで入室 (PIN自動入力)": "📱 Scan to enter (automatic PIN entry)"
+  "📱 スキャンで入室 (PIN自動入力)": "📱 Scan to enter (automatic PIN entry)",
+  "ブラウザ連携 (Tampermonkey)": "Browser integration (Tampermonkey)",
+  "ブラウザ連携 (Tampermonkey)...": "Browser integration (Tampermonkey)...",
+  "ブラウザで見ている画像を、画像にマウスを乗せると出る転送ボタンから\nこのアプリへ送ってそのまま動画化します。\nご利用には Tampermonkey 拡張機能のインストールが必要です。": "Send an image you are viewing in the browser to this app via the transfer button that appears when you hover over it, and turn it into a video right away.\nUsing this requires the Tampermonkey browser extension.",
+  "ブラウザ連携を有効にする": "Enable browser integration",
+  "ユーザースクリプトをインストール (ブラウザで開く)": "Install user script (open in browser)",
+  "トークン:": "Token:",
+  "※ 完成した動画は「設定 > 自動保存先」のフォルダに保存されます。\n　 ブラウザ連携を使う前に、自動保存を ON にしておいてください。": "* The finished video is saved to the folder set in \"Settings > Auto-save folder\".\n  Before using browser integration, please turn auto-save ON.",
+  "待受中: http://127.0.0.1:{port}\n上のボタンからスクリプトをインストールしてください。": "Listening: http://127.0.0.1:{port}\nInstall the script using the button above.",
+  "無効です。": "Disabled.",
+  "ブラウザ連携: ローカル待受中 (127.0.0.1:{port})": "Browser integration: listening locally (127.0.0.1:{port})",
+  "🖥 ブラウザ連携 生成中: #{job_id}": "🖥 Browser integration generating: #{job_id}",
+  "🖥 ブラウザ連携 生成エラー: {msg}": "🖥 Browser integration error: {msg}"
 }
