@@ -335,5 +335,13 @@
   "無効です。": "Disabled.",
   "ブラウザ連携: ローカル待受中 (127.0.0.1:{port})": "Browser integration: listening locally (127.0.0.1:{port})",
   "🖥 ブラウザ連携 生成中: #{job_id}": "🖥 Browser integration generating: #{job_id}",
-  "🖥 ブラウザ連携 生成エラー: {msg}": "🖥 Browser integration error: {msg}"
+  "🖥 ブラウザ連携 生成エラー: {msg}": "🖥 Browser integration error: {msg}",
+  "通常": "Standard",
+  "標準の動画生成": "Standard video generation",
+  "パイズリ": "Paizuri",
+  "パイズリ向けLoRA・プロンプト構成": "LoRA and prompt setup for paizuri",
+  "フェラ": "Fellatio",
+  "フェラ向けLoRA・プロンプト構成": "LoRA and prompt setup for fellatio",
+  "中出し": "Creampie",
+  "中出し向けLoRA・プロンプト構成": "LoRA and prompt setup for creampie"
 }

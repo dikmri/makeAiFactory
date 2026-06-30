@@ -89,6 +89,11 @@ WORKFLOW_PRESETS: dict[str, dict] = {
         "desc":  "フェラ向けLoRA・プロンプト構成",
         "source": "fe.json",
     },
+    "naka": {
+        "label": "中出し",
+        "desc":  "中出し向けLoRA・プロンプト構成",
+        "source": "naka.json",
+    },
 }
 _VALID_WORKFLOWS = set(WORKFLOW_PRESETS.keys())
 DEFAULT_WORKFLOW = "default"

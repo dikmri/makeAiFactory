@@ -220,6 +220,34 @@
       "workflows": ["fe"]
     },
     {
+      "name": "maleejac2_high_noise.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/maleejac2_high_noise.safetensors",
+      "source_url": "https://huggingface.co/RamenUme/anyModel/resolve/main/maleejac2_high_noise.safetensors",
+      "sha256": "512aae6540531f9e6923c22dc3b0c4f3779cd30aa97c97376a593015508160d6",
+      "size_bytes": 306808360,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "note": "成人向けLoRA。中出し ワークフロー選択時のみオンデマンドDL",
+      "presets": [],
+      "workflows": ["naka"]
+    },
+    {
+      "name": "maleejac2_low_noise.safetensors",
+      "type": "lora",
+      "target": "ComfyUI/models/loras/maleejac2_low_noise.safetensors",
+      "source_url": "https://huggingface.co/RamenUme/anyModel/resolve/main/maleejac2_low_noise.safetensors",
+      "sha256": "eb409d59a22ebd047331e7bef741845c6a4d5c36e1b887066a6713ff03fb8b27",
+      "size_bytes": 306808360,
+      "required": true,
+      "required_manual": false,
+      "license": "TO_BE_CONFIRMED",
+      "note": "成人向けLoRA。中出し ワークフロー選択時のみオンデマンドDL",
+      "presets": [],
+      "workflows": ["naka"]
+    },
+    {
       "name": "Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
       "type": "unet",
       "target": "ComfyUI/models/unet/Wan22-I2V-FastMix_v10-H-Q4_K_M.gguf",
