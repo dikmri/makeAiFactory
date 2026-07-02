@@ -7,6 +7,7 @@ let csrfToken = '';
 let currentJobId = null;
 let pollingTimer = null;
 let selectedFile = null;
+let workflows = [];
 
 // ── ユーティリティ ────────────────────────────────────────────────────────────
 
@@ -114,6 +115,12 @@ function showUpload(errorMsg) {
         <div class="drop-hint">JPG / PNG / WEBP ・ 最大20MB</div>
       </div>
       ${errorMsg ? `<div class="error-msg">${escHtml(errorMsg)}</div>` : ''}
+      <div class="select-row" id="workflow-select-wrap" style="display:none">
+        <label for="workflow-select">ワークフローを選ぶ</label>
+        <select id="workflow-select">
+          <option value="">おまかせ（標準設定）</option>
+        </select>
+      </div>
       <button class="btn" id="generate-btn" disabled>動画にする ▶</button>
     </div>
     <div class="card" id="room-info-card">
@@ -128,6 +135,7 @@ function showUpload(errorMsg) {
   document.getElementById('generate-btn').addEventListener('click', submitJob);
   setupDropZone();
   loadRoomInfo();
+  loadWorkflows();
 }
 
 function setupDropZone() {
@@ -167,6 +175,30 @@ async function loadRoomInfo() {
   } catch { /* ignore */ }
 }
 
+async function loadWorkflows() {
+  try {
+    const res = await fetch('/api/workflows');
+    const data = await res.json();
+    workflows = Array.isArray(data.workflows) ? data.workflows : [];
+  } catch {
+    workflows = [];
+  }
+  renderWorkflowOptions();
+}
+
+function renderWorkflowOptions() {
+  const wrap   = document.getElementById('workflow-select-wrap');
+  const select = document.getElementById('workflow-select');
+  if (!wrap || !select) return;
+  if (!workflows.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+  select.innerHTML = '<option value="">おまかせ（標準設定）</option>' +
+    workflows.map(w => `<option value="${escHtml(w.key)}">${escHtml(w.label)}</option>`).join('');
+  wrap.style.display = '';
+}
+
 // ── ジョブ送信 ────────────────────────────────────────────────────────────────
 
 async function submitJob() {
@@ -177,6 +209,10 @@ async function submitJob() {
 
   const formData = new FormData();
   formData.append('image', selectedFile);
+  const workflowSelect = document.getElementById('workflow-select');
+  if (workflowSelect && workflowSelect.value) {
+    formData.append('workflow', workflowSelect.value);
+  }
 
   try {
     const res = await fetch('/api/jobs', {

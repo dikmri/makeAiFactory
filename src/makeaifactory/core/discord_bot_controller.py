@@ -42,6 +42,24 @@ def _fmt_minutes(total_min: int) -> str:
     return f"約{h}時間{m}分" if m else f"約{h}時間"
 
 
+def _resolve_workflow(content: str) -> str | None:
+    """メッセージ本文からワークフロー指定を抽出する。
+
+    本文を空白 (全角スペースを含む) で分割したトークン列を作り、各トークンが
+    WORKFLOW_PRESETS の key (大文字小文字無視) または label と一致すれば、
+    最初に一致したワークフローキーを返す。一致しなければ None (=既定ワークフロー)。
+    """
+    from ..constants import WORKFLOW_PRESETS
+
+    if not content:
+        return None
+    for token in content.split():
+        for key, info in WORKFLOW_PRESETS.items():
+            if token.lower() == key.lower() or token == info.get("label"):
+                return key
+    return None
+
+
 def _patch_broken_orjson() -> None:
     """discord/utils.py は try/except ImportError で orjson をオプション使用するが、
     PyInstaller が orjson.pyd を不完全収集すると AttributeError が素通りして
@@ -112,7 +130,7 @@ class DiscordBotController:
         if not active:
             self._interrupt_active.clear()
 
-    def _receipt_msg(self, pos: int, is_interrupt: bool = False) -> str:
+    def _receipt_msg(self, pos: int, is_interrupt: bool = False, workflow_label: str | None = None) -> str:
         """受付時の Discord 返信メッセージを生成する。"""
         preset = self._settings.model_preset
         label = MODEL_PRESETS.get(preset, MODEL_PRESETS["normal"]).get("label", preset)
@@ -124,6 +142,8 @@ class DiscordBotController:
             f"推定時間: {_fmt_minutes(wait_min)}",
             f"使用プリセット: {label}",
         ]
+        if workflow_label:
+            lines.append(f"🎬 ワークフロー: {workflow_label}")
         if is_interrupt:
             lines.append("（現在の動画完了後に割り込み生成します）")
         return "\n".join(lines)
@@ -258,6 +278,13 @@ class DiscordBotController:
         if image_att is None:
             return
 
+        workflow = _resolve_workflow(message.content)
+        logger.info("Discord ワークフロー指定: %s", workflow or "(既定)")
+        workflow_label = None
+        if workflow:
+            from ..constants import WORKFLOW_PRESETS
+            workflow_label = WORKFLOW_PRESETS.get(workflow, {}).get("label")
+
         # バッチ生成中の処理: 割り込みモードか否かで分岐
         if self._batch_mode:
             if self._settings.discord_bot_interrupt:
@@ -267,8 +294,8 @@ class DiscordBotController:
                     return
                 self._interrupt_active.set()
                 pos = self._queue.qsize() + 1
-                await message.reply(self._receipt_msg(pos, is_interrupt=True))
-                await self._queue.put((message, image_att, True))
+                await message.reply(self._receipt_msg(pos, is_interrupt=True, workflow_label=workflow_label))
+                await self._queue.put((message, image_att, True, workflow))
                 return
             else:
                 await message.reply(
@@ -283,8 +310,8 @@ class DiscordBotController:
             return
 
         pos = self._queue.qsize() + 1
-        await message.reply(self._receipt_msg(pos, is_interrupt=False))
-        await self._queue.put((message, image_att, False))
+        await message.reply(self._receipt_msg(pos, is_interrupt=False, workflow_label=workflow_label))
+        await self._queue.put((message, image_att, False, workflow))
 
     # ── 状態ファイル定期更新 ───────────────────────────────────────────────
 
@@ -309,9 +336,9 @@ class DiscordBotController:
 
     async def _worker(self) -> None:
         while True:
-            message, attachment, is_interrupt = await self._queue.get()
+            message, attachment, is_interrupt, workflow = await self._queue.get()
             try:
-                await self._process(message, attachment, is_interrupt)
+                await self._process(message, attachment, is_interrupt, workflow)
             except asyncio.CancelledError:
                 raise
             except _CancelledError:
@@ -336,7 +363,7 @@ class DiscordBotController:
 
     # ── 1件の生成処理 ──────────────────────────────────────────────────────
 
-    async def _process(self, message, attachment, is_interrupt: bool = False) -> None:
+    async def _process(self, message, attachment, is_interrupt: bool = False, workflow: str | None = None) -> None:
         self._cancel_requested.clear()
 
         # デキュー直前の状態確認 (割り込みキュー経由のリクエストは常に処理する)
@@ -379,6 +406,7 @@ class DiscordBotController:
             # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
             output_path = await self._generate_video(
                 image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
+                workflow=workflow,
             )
             _emit_started()  # フォールバック: execution_start を観測できなかった場合も必ず発火
             elapsed = _time.monotonic() - gen_start
@@ -407,12 +435,24 @@ class DiscordBotController:
     # ── ComfyUI 動画生成 ───────────────────────────────────────────────────
 
     async def _generate_video(
-        self, image_path: Path, comfy_port: int, on_started=None,
+        self, image_path: Path, comfy_port: int, on_started=None, workflow: str | None = None,
     ) -> Path:
         model_preset = self._settings.model_preset
         preset_def = MODEL_PRESETS.get(model_preset, MODEL_PRESETS["normal"])
 
+        # ジョブにワークフロー指定があれば、そのワークフロー用にサニタイズ済みの
+        # テンプレートを使う (build_workflow_templates() で templates/<wf>.json へ生成済み)。
+        # 無ければアプリでアクティブな runtime_template にフォールバックする。
         template_path = self._paths.runtime_template_json()
+        if workflow:
+            wf_path = self._paths.runtime_root / "remote_room" / "templates" / f"{workflow}.json"
+            if wf_path.exists():
+                template_path = wf_path
+                logger.info("Discord ワークフロー指定: %s (%s)", workflow, wf_path.name)
+            else:
+                logger.warning(
+                    "Discord ワークフローテンプレート未生成: %s → 既定にフォールバック", workflow
+                )
         if not template_path.exists():
             raise FileNotFoundError(f"ワークフローテンプレートが見つかりません: {template_path}")
         with template_path.open(encoding="utf-8") as f:

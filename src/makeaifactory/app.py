@@ -635,6 +635,10 @@ def run_app() -> int:
         sig.job_cancelled.connect(_on_discord_job_cancelled, Qt.ConnectionType.QueuedConnection)
         sig.job_error.connect(_on_discord_job_error,       Qt.ConnectionType.QueuedConnection)
         sig.status_changed.connect(window.update_discord_status, Qt.ConnectionType.QueuedConnection)
+        try:
+            ctrl.build_workflow_templates()
+        except Exception:
+            logger.warning("Discord Bot: ワークフローテンプレート生成に失敗", exc_info=True)
         bot.start()
 
     @Slot(str, str)
@@ -777,13 +781,17 @@ def run_app() -> int:
             _remote_room["dlg"] = dlg
 
             def _handle_start(config_dict: dict) -> None:
-                ctrl = _remote_room.get("ctrl")
-                if ctrl and ctrl.is_running:
+                room_ctrl = _remote_room.get("ctrl")
+                if room_ctrl and room_ctrl.is_running:
                     return
                 cfg = RemoteRoomConfig.from_dict(config_dict)
-                ctrl = RemoteRoomController(settings, paths)
-                _remote_room["ctrl"] = ctrl
-                sig = ctrl.signals
+                try:
+                    ctrl.build_workflow_templates()
+                except Exception:
+                    logger.warning("インターネット投入口: ワークフローテンプレート生成に失敗", exc_info=True)
+                room_ctrl = RemoteRoomController(settings, paths)
+                _remote_room["ctrl"] = room_ctrl
+                sig = room_ctrl.signals
                 sig.status_changed.connect(dlg.update_status,          Qt.ConnectionType.QueuedConnection)
                 sig.status_changed.connect(_on_remote_status_for_qr,   Qt.ConnectionType.QueuedConnection)
                 sig.public_url_ready.connect(dlg.set_public_url,       Qt.ConnectionType.QueuedConnection)
@@ -795,7 +803,7 @@ def run_app() -> int:
                 sig.job_done.connect(_on_remote_job_done,              Qt.ConnectionType.QueuedConnection)
                 sig.job_error.connect(_on_remote_job_error,            Qt.ConnectionType.QueuedConnection)
                 settings.set_remote_room_config(config_dict)
-                ctrl.start(cfg)
+                room_ctrl.start(cfg)
                 dlg.update_status("starting", tr("起動中..."))
 
             def _handle_stop() -> None:

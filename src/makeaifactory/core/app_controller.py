@@ -304,11 +304,12 @@ class AppController:
 
     # ── ブラウザ連携 (ローカルブリッジ / Tampermonkey) ───────────────────────────
 
-    def _build_local_bridge_templates(self) -> list[str]:
+    def build_workflow_templates(self) -> list[str]:
         """利用可能な各ワークフローをサニタイズして templates/<wf>.json に生成する。
 
         モデル/LoRAが揃っているワークフローのみ生成し、生成できたキーの一覧を返す。
         ブラウザ側の `/api/workflows` は、ここで生成されたものだけを選択肢に出す。
+        ローカルブリッジ/インターネット投入口/Discord で共用するワークフロー別テンプレートを生成する。
         """
         from ..comfy.workflow_sanitizer import load_and_sanitize
         from ..constants import WORKFLOW_PRESETS
@@ -348,7 +349,7 @@ class AppController:
             token = secrets.token_urlsafe(24)
             self._settings.set_local_bridge_token(token)
 
-        self._build_local_bridge_templates()
+        self.build_workflow_templates()
 
         if self._local_bridge is None:
             self._local_bridge = RemoteRoomController(self._settings, self._paths)
