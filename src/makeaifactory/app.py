@@ -18,6 +18,7 @@ from .gui.icon_data import app_icon
 from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENSIONS
 from .i18n import tr, tr_elapsed
 from .core.app_controller import AppController
+from .core.batch_output import finalize_batch_item
 from .core.bot_state import write_bot_state
 from .core.diagnostics import build_diagnostic_payload
 from .core.error_reporter import send_error_report
@@ -1141,6 +1142,26 @@ def run_app() -> int:
 
         start = time.monotonic()
         completed = 0
+        failed: list[str] = []
+        manifest_path = output_folder / "batch_manifest.json"
+
+        def _append_manifest(entry: dict) -> None:
+            # manifestへの記録はbest-effort。失敗してもバッチ処理自体は継続する。
+            # 原子的書き込みは後続PRで共通化予定のため、現時点では
+            # 「既存全体を読んで1件追記し、全体を書き戻す」素朴な実装でよい。
+            import json
+            try:
+                try:
+                    existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if not isinstance(existing, list):
+                        existing = []
+                except (FileNotFoundError, json.JSONDecodeError):
+                    existing = []
+                existing.append(entry)
+                with manifest_path.open("w", encoding="utf-8") as f:
+                    json.dump(existing, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.debug("batch_manifest.json 書き込み失敗: %s", e)
 
         for i, image_path in enumerate(images):
             if _batch_cancel.is_set():
@@ -1162,14 +1183,30 @@ def run_app() -> int:
             try:
                 job_ctrl = ctrl.get_job_controller()
                 output, _bench = await job_ctrl.run_job(image_path, on_progress=_cb)
-                shutil.move(str(image_path), str(end_dir / image_path.name))
-                shutil.copy2(str(output), str(output_folder / f"{image_path.stem}.mp4"))
+                final = finalize_batch_item(image_path, output, output_folder, end_dir)
                 completed += 1
+                _append_manifest({
+                    "input": image_path.name,
+                    "stem": image_path.stem,
+                    "state": "done",
+                    "output": final.name,
+                    "error": None,
+                    "timestamp": time.time(),
+                })
             except Exception as e:
                 if _batch_cancel.is_set():
                     logger.info("バッチ生成中断 (%s)", image_path.name)
                 else:
+                    failed.append(image_path.name)
                     logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
+                    _append_manifest({
+                        "input": image_path.name,
+                        "stem": image_path.stem,
+                        "state": "failed",
+                        "output": None,
+                        "error": str(e),
+                        "timestamp": time.time(),
+                    })
 
             # Discord 割り込み生成: 1件終了後、割り込みキューが空になるまで待機
             disc_ctrl = _discord["ctrl"]
@@ -1187,6 +1224,9 @@ def run_app() -> int:
                         break
                     await asyncio.sleep(0.5)
                 logger.info("Discord 割り込み完了 → バッチ再開")
+
+        if failed:
+            logger.warning("バッチ失敗 %d件: %s", len(failed), failed)
 
         elapsed = time.monotonic() - start
         signals.batch_done.emit(completed, total, elapsed)
