@@ -91,6 +91,23 @@ def _get_client_ip(request) -> str:  # type: ignore[no-untyped-def]
     return request.remote or "0.0.0.0"
 
 
+def job_is_owned(job, session_id: str | None, local_token_ok: bool) -> bool:
+    """ジョブの所有権を判定する。情報を漏らさないため、判定は厳格にする。
+
+    - ローカルブリッジ経由のジョブ(job.session_id == "")は、正当なローカル
+      トークンを提示した要求のみ所有者とみなす。
+    - 通常ジョブ(job.session_id が非空)は、その session_id と一致する
+      cookie セッションのみ所有者とみなす。ローカルトークンでは通常ジョブに
+      アクセスできない。
+    """
+    owner_sid = job.session_id
+    if owner_sid == "":
+        # ローカルブリッジ経由のジョブ: ローカルトークンでのみ所有者とみなす
+        return local_token_ok
+    # 通常ジョブ: cookie セッションが一致する場合のみ所有者とみなす
+    return bool(session_id) and session_id == owner_sid
+
+
 class RoomServer:
     def __init__(
         self,
@@ -150,6 +167,27 @@ class RoomServer:
             }
             self._on_stats_changed(stats)
 
+    def _local_token_ok(self, request) -> bool:
+        """要求ヘッダーのローカルトークンが正当か検証する。"""
+        token = getattr(self._config, "local_token", None)
+        req = request.headers.get("X-MAF-Local-Token", "")
+        return bool(token) and secrets.compare_digest(req, str(token))
+
+    def _get_owned_job_or_404(self, request):
+        """要求元が所有するジョブのみを返す。所有権がなければ 404 とする。
+
+        存在確認そのものを漏らさないよう、ジョブ不在と未所有を区別しない。
+        """
+        from aiohttp import web
+        job_id = request.match_info["job_id"]
+        job = self._jobs.get(job_id)
+        session_id = request.cookies.get("maf_room_session")
+        session = self._auth.get_session(session_id)
+        ok_session_id = session_id if session is not None else None  # 無効セッションは None 扱い
+        if job is None or not job_is_owned(job, ok_session_id, self._local_token_ok(request)):
+            raise web.HTTPNotFound()
+        return job
+
     # ── ルート: GET / ──────────────────────────────────────────────────────────
 
     async def _handle_index(self, request) -> object:
@@ -205,12 +243,21 @@ class RoomServer:
         except Exception:
             return self._make_error_response("INVALID_PIN", 400)
 
-        pin = str(body.get("pin", ""))
-        if not self._auth.verify_pin(pin):
-            return self._make_error_response("INVALID_PIN", 401)
-
         ip = _get_client_ip(request)
         ip_hash = self._hash_ip(ip)
+
+        # PIN 総当たり対策: ロック中の IP は検証せず 429 を返す
+        if self._auth.is_pin_locked(ip_hash):
+            return self._make_error_response("RATE_LIMITED", 429)
+
+        pin = str(body.get("pin", ""))
+        if not self._auth.verify_pin(pin):
+            self._auth.record_pin_failure(ip_hash)
+            return self._make_error_response("INVALID_PIN", 401)
+
+        # 成功: 失敗記録を解除し、ついでに期限切れ session を清掃する
+        self._auth.reset_pin_failures(ip_hash)
+        self._auth.cleanup_expired()
         session = self._auth.create_session(ip_hash)
 
         response = web.Response(
@@ -409,16 +456,8 @@ class RoomServer:
 
     async def _handle_get_job(self, request) -> object:
         from aiohttp import web
-        job_id = request.match_info["job_id"]
-        job = self._jobs.get(job_id)
-        if job is None:
-            raise web.HTTPNotFound()
-
-        # セッション確認
-        session_id = request.cookies.get("maf_room_session")
-        session = self._auth.get_session(session_id)
-        if session is None:
-            return self._make_error_response("SESSION_EXPIRED", 401)
+        job = self._get_owned_job_or_404(request)
+        job_id = job.job_id
 
         position = self._get_queue_position(job_id) if job.status == "queued" else 0
         return web.Response(
@@ -430,58 +469,19 @@ class RoomServer:
 
     async def _handle_get_video(self, request) -> object:
         from aiohttp import web
-        job_id = request.match_info["job_id"]
-        job = self._jobs.get(job_id)
-        if job is None or job.output_path is None:
+        job = self._get_owned_job_or_404(request)
+        job_id = job.job_id
+        if job.output_path is None:
             raise web.HTTPNotFound()
 
         video_path = Path(job.output_path)
         if not video_path.exists():
             raise web.HTTPNotFound()
 
-        file_size = video_path.stat().st_size
-        range_header = request.headers.get("Range")
-
-        if range_header:
-            try:
-                range_val = range_header.replace("bytes=", "").strip()
-                start_str, _, end_str = range_val.partition("-")
-                start = int(start_str) if start_str else 0
-                end = int(end_str) if end_str else file_size - 1
-                end = min(end, file_size - 1)
-                length = end - start + 1
-
-                with video_path.open("rb") as f:
-                    f.seek(start)
-                    data = f.read(length)
-
-                response = web.Response(
-                    status=206,
-                    body=data,
-                    content_type="video/mp4",
-                    headers={
-                        "Content-Range": f"bytes {start}-{end}/{file_size}",
-                        "Accept-Ranges": "bytes",
-                        "Content-Length": str(length),
-                        "Content-Disposition": f'inline; filename="makeAiFactory_{job_id}.mp4"',
-                    },
-                )
-                return response
-            except Exception:
-                pass
-
-        # レンジ未指定: 全体を返す
-        with video_path.open("rb") as f:
-            data = f.read()
-
-        return web.Response(
-            body=data,
-            content_type="video/mp4",
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(file_size),
-                "Content-Disposition": f'inline; filename="makeAiFactory_{job_id}.mp4"',
-            },
+        # Range/Content-Type は aiohttp の FileResponse に委譲する
+        return web.FileResponse(
+            video_path,
+            headers={"Content-Disposition": f'inline; filename="makeAiFactory_{job_id}.mp4"'},
         )
 
     # ── サーバー起動・停止 ─────────────────────────────────────────────────────

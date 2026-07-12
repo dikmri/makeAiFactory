@@ -1,1 +1,1 @@
-__version__ = "0.2.0"
+from .constants import APP_VERSION as __version__

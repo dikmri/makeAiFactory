@@ -15,6 +15,8 @@ from typing import Callable, NamedTuple
 import httpx
 
 from ..constants import APP_VERSION, GITHUB_REPO
+from ..domain.errors import HashMismatchError
+from ..runtime.hash_verifier import verify_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,9 @@ class ReleaseInfo(NamedTuple):
     tag: str
     download_url: str
     release_url: str
+    # release.yml が生成する "<zip名>.sha256" アセットのURL。
+    # 旧リリース(このPR以前にビルドされたもの)には存在しないため None になりうる。
+    sha256_url: str | None = None
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -130,17 +135,46 @@ async def check_for_update() -> ReleaseInfo | None:
         if _parse_version(latest_ver) <= _parse_version(APP_VERSION):
             logger.debug("Latest v%s <= current v%s. Skip.", latest_ver, APP_VERSION)
             return None
-        for asset in data.get("assets", []):
-            if asset.get("name", "").endswith("-windows.zip"):
-                return ReleaseInfo(
-                    version=latest_ver,
-                    tag=tag,
-                    download_url=asset["browser_download_url"],
-                    release_url=data.get("html_url", ""),
-                )
+        assets = data.get("assets", [])
+        zip_asset = next(
+            (a for a in assets if a.get("name", "").endswith("-windows.zip")), None
+        )
+        if zip_asset is not None:
+            # 同じリリースに "<zip名>.sha256" が同梱されていれば取得する。
+            # 無い場合(このPR以前の旧リリース)は None のままにし、
+            # download_update 側でフォールバック(検証スキップ)させる。
+            sha256_asset = next(
+                (a for a in assets if a.get("name", "") == f"{zip_asset['name']}.sha256"),
+                None,
+            )
+            return ReleaseInfo(
+                version=latest_ver,
+                tag=tag,
+                download_url=zip_asset["browser_download_url"],
+                release_url=data.get("html_url", ""),
+                sha256_url=sha256_asset["browser_download_url"] if sha256_asset else None,
+            )
     except Exception as e:
         logger.debug("Update check failed: %s", e)
     return None
+
+
+async def _fetch_expected_sha256(sha256_url: str) -> str | None:
+    """`<zip名>.sha256` アセットの内容から期待ハッシュ値を取得する。
+
+    取得自体に失敗した場合は None を返し、呼び出し側でフォールバック
+    (検証スキップ+警告ログ)させる。ファイル形式は sha256sum 互換
+    ("<hash>  <ファイル名>") を想定し、先頭トークンのみを使う。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(sha256_url)
+            resp.raise_for_status()
+        text = resp.text.strip()
+        return text.split()[0] if text else None
+    except Exception as e:
+        logger.warning("SHA256チェックサムファイルの取得に失敗しました: %s", e)
+        return None
 
 
 async def download_update(
@@ -160,6 +194,32 @@ async def download_update(
                     downloaded += len(chunk)
                     if progress_cb and total:
                         progress_cb(downloaded / total)
+
+    # ── UPD-01: 展開(apply_update_and_restart)前にSHA-256検証 ──────────────
+    # release.yml が生成する "<zip名>.sha256" アセットが取得できた場合のみ
+    # 厳格に検証する。旧リリース(.sha256未同梱)向けのフォールバックとして、
+    # アセットが無い/取得失敗の場合は既存挙動を維持し、検証スキップ+警告ログ
+    # のみで適用を継続する(自動更新の「適用は維持」方針のため)。
+    if release.sha256_url:
+        expected = await _fetch_expected_sha256(release.sha256_url)
+        if expected:
+            try:
+                verify_sha256(tmp_path, expected)
+                logger.info("更新ZIPのSHA256検証OK: %s", tmp_path.name)
+            except HashMismatchError:
+                tmp_path.unlink(missing_ok=True)
+                logger.error("更新ZIPのSHA256が一致しません。展開・適用を中止します: %s", tmp_path.name)
+                raise
+        else:
+            logger.warning(
+                "SHA256チェックサムを取得できなかったため検証をスキップします: %s", tmp_path.name
+            )
+    else:
+        logger.warning(
+            "リリースに .sha256 アセットが見つからないため検証をスキップします"
+            "(旧リリース向けフォールバック): %s",
+            tmp_path.name,
+        )
     return tmp_path
 
 

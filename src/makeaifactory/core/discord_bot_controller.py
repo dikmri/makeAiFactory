@@ -25,6 +25,7 @@ from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state, write_bot_state
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
+from ..domain.errors import OutputNotFoundError
 from ..i18n import tr
 
 logger = logging.getLogger(__name__)
@@ -506,8 +507,21 @@ class DiscordBotController:
             if self._cancel_requested.is_set():
                 raise _CancelledError()
 
-            history = await client.get_history(prompt_id)
-            output_mp4 = resolve_output_mp4(history, prompt_id, self._paths.comfyui_output_dir, job_id)
+            # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
+            output_mp4: Path | None = None
+            last_error: OutputNotFoundError | None = None
+            for attempt in range(3):
+                history = await client.get_history(prompt_id)
+                try:
+                    output_mp4 = resolve_output_mp4(history, prompt_id, self._paths.comfyui_output_dir, job_id)
+                    break
+                except OutputNotFoundError as e:
+                    last_error = e
+                    if attempt < 2:
+                        await asyncio.sleep(0.3)
+            if output_mp4 is None:
+                assert last_error is not None
+                raise last_error
 
             final_output = job_dir / "output.mp4"
             shutil.copy2(output_mp4, final_output)

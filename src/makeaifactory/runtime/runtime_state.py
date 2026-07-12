@@ -4,6 +4,7 @@ import json
 import logging
 from pathlib import Path
 
+from ..core.atomic_json import read_json_or_default, write_json_atomic
 from ..domain.progress import SetupState
 
 logger = logging.getLogger(__name__)
@@ -18,17 +19,11 @@ class RuntimeState:
         self._load()
 
     def _load(self) -> None:
-        if self._path.exists():
-            try:
-                with self._path.open("r", encoding="utf-8") as f:
-                    self._data = json.load(f)
-            except Exception:
-                self._data = {}
+        # 壊れたJSONは read_json_or_default 内で ".corrupt" へ隔離される
+        self._data = read_json_or_default(self._path, {})
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=2)
+        write_json_atomic(self._path, self._data)
 
     @property
     def setup_state(self) -> SetupState:

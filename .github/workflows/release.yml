@@ -34,19 +34,6 @@ jobs:
             -replace 'version = "[^"]*"', "version = `"$version`"" |
             Set-Content pyproject.toml
 
-      - name: Inject error report webhook URL
-        shell: pwsh
-        env:
-          ERROR_REPORT_WEBHOOK_URL: ${{ secrets.ERROR_REPORT_WEBHOOK_URL }}
-        run: |
-          if ($env:ERROR_REPORT_WEBHOOK_URL) {
-            (Get-Content src\makeaifactory\constants.py) `
-              -replace 'ERROR_REPORT_WEBHOOK_URL = "[^"]*"', "ERROR_REPORT_WEBHOOK_URL = `"$env:ERROR_REPORT_WEBHOOK_URL`"" |
-              Set-Content src\makeaifactory\constants.py
-          } else {
-            Write-Output "ERROR_REPORT_WEBHOOK_URL secret未設定。報告機能は無効のままビルドします。"
-          }
-
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
@@ -91,6 +78,16 @@ jobs:
           Write-Output "Archive: ${archive} (${size} MB)"
         id: archive
 
+      - name: Compute SHA-256 checksum
+        shell: pwsh
+        run: |
+          # 自動更新(updater.py)がDL後に展開前検証で使うチェックサムファイル。
+          # "<hash>  <ファイル名>" 形式 (sha256sum互換) で書き出す。
+          $archive = "${{ steps.archive.outputs.archive }}"
+          $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive" | Set-Content -Path "$archive.sha256" -Encoding ascii -NoNewline
+          Write-Output "SHA256: $hash"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -110,7 +107,9 @@ jobs:
             - 約 55 GB 以上の空き容量
 
             > 初回セットアップ時に ComfyUI・Wan2.2 モデル等がダウンロードされます。
-          files: makeAiFactory-${{ github.ref_name }}-windows.zip
+          files: |
+            makeAiFactory-${{ github.ref_name }}-windows.zip
+            makeAiFactory-${{ github.ref_name }}-windows.zip.sha256
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: false

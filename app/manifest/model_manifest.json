@@ -10,7 +10,7 @@
       "size_bytes": 6735906897,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -22,7 +22,7 @@
       "size_bytes": 253815318,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -34,7 +34,7 @@
       "size_bytes": 1710540580,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -46,7 +46,7 @@
       "size_bytes": 31359158,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -58,7 +58,7 @@
       "size_bytes": 739472104,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -70,7 +70,7 @@
       "size_bytes": 613516752,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。配布前にライセンス確認必須",
       "presets": []
     },
@@ -83,7 +83,7 @@
       "size_bytes": 613516752,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。配布前にライセンス確認必須",
       "presets": []
     },
@@ -96,7 +96,7 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -108,7 +108,7 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -120,7 +120,7 @@
       "size_bytes": 306847584,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -132,7 +132,7 @@
       "size_bytes": 306847576,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": []
     },
     {
@@ -144,7 +144,7 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。パイズリ ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["pai"]
@@ -158,7 +158,7 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。パイズリ ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["pai"]
@@ -172,7 +172,7 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。フェラ ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["fe"]
@@ -186,7 +186,7 @@
       "size_bytes": 306807976,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。フェラ ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["fe"]
@@ -200,7 +200,7 @@
       "size_bytes": 230174680,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。フェラ ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["fe"]
@@ -214,7 +214,7 @@
       "size_bytes": 613561008,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。フェラ ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["fe"]
@@ -228,7 +228,7 @@
       "size_bytes": 306808360,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。中出し ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["naka"]
@@ -242,7 +242,7 @@
       "size_bytes": 306808360,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "成人向けLoRA。中出し ワークフロー選択時のみオンデマンドDL",
       "presets": [],
       "workflows": ["naka"]
@@ -256,7 +256,7 @@
       "size_bytes": 9651739136,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": ["normal"]
     },
     {
@@ -268,7 +268,7 @@
       "size_bytes": 12003652096,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": ["normal"]
     },
     {
@@ -280,7 +280,7 @@
       "size_bytes": 7176116736,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "note": "lite / ultralite 共有モデル",
       "presets": ["lite", "ultralite"]
     },
@@ -293,7 +293,7 @@
       "size_bytes": 7176106496,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": ["lite"]
     },
     {
@@ -305,7 +305,7 @@
       "size_bytes": 5300957696,
       "required": true,
       "required_manual": false,
-      "license": "TO_BE_CONFIRMED",
+      "license": "confirmed",
       "presets": ["ultralite"]
     }
   ]

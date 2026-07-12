@@ -95,8 +95,10 @@ def test_preset_sanitizes_to_valid_template(workflow_id):
 
 
 def test_workflow_loras_are_ondemand_not_setup_models():
-    """pai/fe 専用LoRAはセットアップ時の自動DL対象に含まれず、
-    各ワークフローの専用モデルとしてのみ列挙されること。"""
+    """pai/fe/naka等の専用LoRAはセットアップ時の自動DL対象に含まれず、
+    各ワークフローの専用モデルとしてのみ列挙されること。
+    対象ワークフローはregistry(WORKFLOW_PRESETS)から動的に列挙するため、
+    将来ワークフローが増えても追随する。"""
     import json
     from makeaifactory.domain.manifest import ModelManifest
     from makeaifactory.runtime.model_installer import _needed_models, workflow_models
@@ -105,7 +107,9 @@ def test_workflow_loras_are_ondemand_not_setup_models():
     manifest = ModelManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
 
     setup_names = {m.name for m in _needed_models(manifest, ["normal", "lite", "ultralite"])}
-    for wid in ("pai", "fe"):
+    target_workflows = [wid for wid in WORKFLOW_PRESETS if workflow_models(manifest, wid)]
+    assert target_workflows, "専用モデルを持つワークフローが1つも見つからない"
+    for wid in target_workflows:
         wf_models = workflow_models(manifest, wid)
         assert wf_models, f"{wid} の専用モデルが定義されていない"
         for m in wf_models:
