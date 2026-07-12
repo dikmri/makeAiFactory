@@ -5,6 +5,11 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
+# PIN 総当たり対策: IP(ハッシュ)単位で、直近ウィンドウ内に規定回数失敗すると
+# 一定時間ロックする。
+_MAX_PIN_FAILURES = 5
+_PIN_LOCK_SECONDS = 300
+
 
 @dataclass
 class Session:
@@ -21,6 +26,31 @@ class AuthManager:
         self._pin_hash = hashlib.sha256(pin.encode()).hexdigest() if require_pin else ""
         self._sessions: dict[str, Session] = {}
         self._ttl = ttl_seconds
+        # PIN 失敗記録 (ip_hash -> 失敗時刻のリスト) とロック期限 (ip_hash -> 解除時刻)
+        self._pin_fails: dict[str, list[float]] = {}
+        self._pin_locked_until: dict[str, float] = {}
+
+    @staticmethod
+    def _now(now: float | None) -> float:
+        return now if now is not None else time.monotonic()
+
+    def is_pin_locked(self, ip_hash: str, now: float | None = None) -> bool:
+        """当該 IP が PIN 失敗によりロック中かを返す。"""
+        return self._now(now) < self._pin_locked_until.get(ip_hash, 0.0)
+
+    def record_pin_failure(self, ip_hash: str, now: float | None = None) -> None:
+        """PIN 失敗を記録し、ウィンドウ内に規定回数を超えたらロックする。"""
+        t = self._now(now)
+        fails = [x for x in self._pin_fails.get(ip_hash, []) if t - x < _PIN_LOCK_SECONDS]
+        fails.append(t)
+        self._pin_fails[ip_hash] = fails
+        if len(fails) >= _MAX_PIN_FAILURES:
+            self._pin_locked_until[ip_hash] = t + _PIN_LOCK_SECONDS
+
+    def reset_pin_failures(self, ip_hash: str) -> None:
+        """PIN 成功時などに失敗記録とロックを解除する。"""
+        self._pin_fails.pop(ip_hash, None)
+        self._pin_locked_until.pop(ip_hash, None)
 
     @property
     def require_pin(self) -> bool:

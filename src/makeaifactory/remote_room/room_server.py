@@ -243,12 +243,21 @@ class RoomServer:
         except Exception:
             return self._make_error_response("INVALID_PIN", 400)
 
-        pin = str(body.get("pin", ""))
-        if not self._auth.verify_pin(pin):
-            return self._make_error_response("INVALID_PIN", 401)
-
         ip = _get_client_ip(request)
         ip_hash = self._hash_ip(ip)
+
+        # PIN 総当たり対策: ロック中の IP は検証せず 429 を返す
+        if self._auth.is_pin_locked(ip_hash):
+            return self._make_error_response("RATE_LIMITED", 429)
+
+        pin = str(body.get("pin", ""))
+        if not self._auth.verify_pin(pin):
+            self._auth.record_pin_failure(ip_hash)
+            return self._make_error_response("INVALID_PIN", 401)
+
+        # 成功: 失敗記録を解除し、ついでに期限切れ session を清掃する
+        self._auth.reset_pin_failures(ip_hash)
+        self._auth.cleanup_expired()
         session = self._auth.create_session(ip_hash)
 
         response = web.Response(

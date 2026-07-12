@@ -50,7 +50,8 @@ class RemoteRoomSignals(QObject):
 
 
 def _generate_pin() -> str:
-    return f"{random.randint(0, 999999):06d}"
+    # 総当たり耐性のため暗号学的乱数で生成する
+    return f"{secrets.randbelow(1000000):06d}"
 
 
 class RemoteRoomController:
