@@ -19,7 +19,7 @@ from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENS
 from .i18n import tr, tr_elapsed
 from .core.app_controller import AppController
 from .core.batch_output import finalize_batch_item
-from .core.bot_state import write_bot_state
+from .core.bot_state import read_bot_state, write_bot_state
 from .core.diagnostics import build_diagnostic_payload
 from .core.error_reporter import send_error_report
 from .core.install_config import load_runtime_config, save_runtime_config
@@ -147,7 +147,9 @@ def run_app() -> int:
     ctrl = AppController(paths, settings)
     window = MainWindow()
     window.set_paths(paths.logs_dir, paths.outputs_dir)
-    window.set_repair_callback(lambda: _trigger_repair(ctrl, window, paths, settings))
+    # 修復コールバックの登録 (window.set_repair_callback(_trigger_repair)) は、
+    # signals/_discord/_remote_room 等を捕捉するネスト関数 _trigger_repair を
+    # 定義した後（本関数の下の方）で行う。
     window.set_report_callback(lambda title, message, detail: _on_report_requested(title, message, detail))
 
     def _global_excepthook(exc_type, exc_value, exc_tb) -> None:
@@ -1095,6 +1097,95 @@ def run_app() -> int:
             logger.exception("セットアップ中に予期しないエラー")
             signals.error.emit(tr("セットアップ失敗"), str(e), "", True)
 
+    def _trigger_repair() -> None:
+        """runtimeの修復 (custom nodes削除→再導入) を実行する。
+
+        - ジョブ (single/batch) 実行中は開始しない。
+        - Remote Room / Discord Bot / Local Bridge と既存ComfyUIを先に停止してから、
+          新しいAppControllerは作らず既存の ctrl を再利用して setup() をやり直す。
+          これにより ComfyUI プロセスは常に最大1個に保たれる。
+        - 削除・再導入はGUIスレッドではなくworker (_Worker/QThreadPool) 上で行う。
+        - 進捗/完了/失敗は、通常のセットアップ完了経路と同じ signals
+          (setup_progress / setup_ready / error) に載せてUIへ届ける。
+        """
+        from .runtime.repair_manager import RepairManager, can_start_repair
+        from .runtime.runtime_state import RuntimeState
+
+        bot_state, _port = read_bot_state(paths.runtime_root)
+        if not can_start_repair(bot_state):
+            window.show_error(
+                tr("修復できません"),
+                tr("生成中は修復できません。生成が完了してからお試しください。"),
+                "", False,
+            )
+            return
+
+        # 公開入口を先に止める (best-effort、順不同でも問題ないが Remote→Discord→Local Bridge の順で)
+        remote_ctrl = _remote_room.get("ctrl")
+        if remote_ctrl is not None:
+            try:
+                remote_ctrl.stop()
+            except Exception:
+                logger.exception("修復: Remote Roomの停止に失敗しました")
+            _remote_room["ctrl"] = None
+
+        if _discord["ctrl"] is not None:
+            try:
+                _discord["ctrl"].stop()
+            except Exception:
+                logger.exception("修復: Discord Botの停止に失敗しました")
+            _discord["ctrl"] = None
+
+        try:
+            ctrl.stop_local_bridge()
+        except Exception:
+            logger.exception("修復: Local Bridgeの停止に失敗しました")
+
+        # 既存ComfyUIの停止。ctrl.stop_server() は公開メソッドで、内部で
+        # self._server があれば .stop() する。ここで確実に0個にしてから
+        # 後段の ctrl.setup() が新規に1個だけ起動するため、ComfyUIプロセスは
+        # 常に最大1個になる。
+        try:
+            ctrl.stop_server()
+        except Exception:
+            logger.exception("修復: 既存ComfyUIの停止に失敗しました")
+
+        window.show_progress_indeterminate(tr("修復中..."))
+
+        async def _repair() -> None:
+            try:
+                # 削除処理はGUIスレッドで行わず、このworkerコルーチン内で実行する。
+                repair = RepairManager(paths.runtime_root, RuntimeState(paths.runtime_root))
+                repair.reset_custom_nodes()
+
+                def _cb(p: SetupProgress) -> None:
+                    signals.setup_progress.emit(p)
+
+                # 新しい AppController は作らず、既存 ctrl を再利用して setup() し直す。
+                # setup() は custom nodes の再インストールを含む一連の処理を行い、
+                # 最後に ComfyUI を1個だけ新規起動する。
+                await ctrl.setup(on_progress=_cb)
+
+                # 次回生成時に古い(停止済み)ComfyUIサーバーを参照したJobControllerを
+                # 使い回してしまわないよう、キャッシュをクリアして再生成させる。
+                ctrl._job_ctrl = None
+
+                # 通常のセットアップ完了と同じ経路 (setup_ready -> _on_setup_ready,
+                # setup_progress(READY) -> _on_setup_progress) でUIを通常状態へ戻す。
+                signals.setup_ready.emit(
+                    ctrl.get_system_info_text(), settings.installed_presets, settings.model_preset,
+                    ctrl.sage_attention_available,
+                )
+                signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message=tr("修復完了")))
+            except Exception as e:
+                logger.exception("修復に失敗しました")
+                signals.error.emit(tr("修復失敗"), str(e), "", False)
+
+        pool = QThreadPool.globalInstance()
+        pool.start(_Worker(_repair(), signals))
+
+    window.set_repair_callback(_trigger_repair)
+
     async def _run_job(image_path: Path) -> None:
         def _cb(p: JobProgress):
             signals.job_progress.emit(p)
@@ -1388,24 +1479,3 @@ def _trigger_preset_install(ctrl: AppController, window: MainWindow, paths: AppP
 
     dlg.install_requested.connect(_start_install)
     dlg.exec()
-
-
-def _trigger_repair(ctrl: AppController, window: MainWindow, paths: AppPaths, settings: SettingsStore) -> None:
-    from .runtime.repair_manager import RepairManager
-    from .runtime.runtime_state import RuntimeState
-    state = RuntimeState(paths.runtime_root)
-    repair = RepairManager(paths.runtime_root, state)
-    repair.reset_custom_nodes()
-    window.show_progress_indeterminate(tr("修復中..."))
-    signals = _AsyncSignals()
-
-    async def _repair():
-        try:
-            ctrl2 = AppController(paths, settings)
-            await ctrl2.setup()
-            signals.setup_progress.emit(SetupProgress(state=SetupState.READY, message=tr("修復完了")))
-        except Exception as e:
-            signals.error.emit(tr("修復失敗"), str(e), "", False)
-
-    pool = QThreadPool.globalInstance()
-    pool.start(_Worker(_repair(), signals))
