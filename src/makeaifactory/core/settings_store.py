@@ -4,6 +4,8 @@ import json
 import logging
 from pathlib import Path
 
+from .atomic_json import read_json_or_default, write_json_atomic
+
 logger = logging.getLogger(__name__)
 
 _DEFAULTS = {
@@ -51,20 +53,11 @@ class SettingsStore:
         self._load()
 
     def _load(self) -> None:
-        if self._path.exists():
-            try:
-                with self._path.open("r", encoding="utf-8") as f:
-                    self._data = json.load(f)
-            except Exception as e:
-                logger.warning("設定ファイル読み込み失敗。デフォルト値を使用します: %s", e)
-                self._data = {}
-        else:
-            self._data = {}
+        # 壊れたJSONは read_json_or_default 内で ".corrupt" へ隔離される
+        self._data = read_json_or_default(self._path, {})
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
+        write_json_atomic(self._path, self._data, ensure_ascii=False, indent=2)
 
     def get(self, key: str):
         return self._data.get(key, _DEFAULTS.get(key))

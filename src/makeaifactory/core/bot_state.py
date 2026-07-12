@@ -5,6 +5,8 @@ import logging
 import time
 from pathlib import Path
 
+from .atomic_json import write_json_atomic
+
 logger = logging.getLogger(__name__)
 
 _STATE_FILENAME = "bot_state.json"
@@ -23,9 +25,14 @@ def write_bot_state(runtime_root: Path, state: str, port: int = 0) -> None:
                 port = json.loads(path.read_text(encoding="utf-8")).get("port", 0)
             except Exception:
                 pass
-        path.write_text(
-            json.dumps({"state": state, "port": port, "updated_at": time.time()}),
-            encoding="utf-8",
+        # 90秒間隔で頻繁に呼ばれるファイルのため、毎回 ".bak" を作ると
+        # 書き込み回数・IOが倍増するだけで得られる価値が薄い。
+        # 直近の状態を失っても discord_bot_controller 側は次の更新で
+        # 追いつけるため、ここでは make_backup=False とする。
+        write_json_atomic(
+            path,
+            {"state": state, "port": port, "updated_at": time.time()},
+            make_backup=False,
         )
     except Exception as e:
         logger.debug("bot_state.json 書き込み失敗: %s", e)
