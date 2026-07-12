@@ -149,8 +149,6 @@ class JobController:
             )
             async for event in client.watch_progress(prompt_id):
                 tracker.handle_event(event)
-                if event.event_type == "execution_error":
-                    break
 
         if job.status == JobState.CANCELLED:
             raise MakeAiFactoryError("生成がキャンセルされました")
@@ -158,17 +156,31 @@ class JobController:
         # history 取得
         job.status = JobState.RESOLVING_OUTPUT
         _notify(on_progress, JobProgress(state=JobState.RESOLVING_OUTPUT, message="動画を取得しています..."))
-        history = await client.get_history(prompt_id)
+
+        # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
+        # (成功しているのに失敗扱いにしないための安全弁。history取得自体は毎回やり直す)
+        history: dict = {}
+        output_mp4: Path | None = None
+        last_error: OutputNotFoundError | None = None
+        for attempt in range(3):
+            history = await client.get_history(prompt_id)
+            try:
+                output_mp4 = resolve_output_mp4(
+                    history,
+                    prompt_id,
+                    self._paths.comfyui_output_dir,
+                    job.job_id,
+                )
+                break
+            except OutputNotFoundError as e:
+                last_error = e
+                if attempt < 2:
+                    await asyncio.sleep(0.3)
         with (job_dir / "history.json").open("w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
-
-        # output mp4 解決
-        output_mp4 = resolve_output_mp4(
-            history,
-            prompt_id,
-            self._paths.comfyui_output_dir,
-            job.job_id,
-        )
+        if output_mp4 is None:
+            assert last_error is not None
+            raise last_error
 
         final_output = job_dir / "output.mp4"
         shutil.copy2(output_mp4, final_output)
