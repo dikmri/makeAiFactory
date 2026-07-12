@@ -14,6 +14,7 @@ _DEFAULTS = {
     "save_base_video": False,
     "developer_mode": False,
     "agreed_to_terms": False,
+    "accepted_terms_version": 0,  # 同意済みの規約バージョン (0=未同意)。CURRENT_TERMS_VERSION と比較して再同意判定に使う
     "vram_mode": "normal",        # "normal" | "novram"
     "model_preset": "normal",     # "normal" | "lite" | "ultralite"
     "installed_presets": ["normal"],
@@ -91,6 +92,17 @@ class SettingsStore:
 
     def agree_to_terms(self) -> None:
         self.set("agreed_to_terms", True)
+
+    @property
+    def accepted_terms_version(self) -> int:
+        """同意済みの規約バージョン。不正値の場合は未同意(0)扱いにする。"""
+        try:
+            return int(self.get("accepted_terms_version") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def set_accepted_terms_version(self, version: int) -> None:
+        self.set("accepted_terms_version", int(version))
 
     @property
     def vram_mode(self) -> str:

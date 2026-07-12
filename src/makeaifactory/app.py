@@ -58,7 +58,7 @@ from .gui.batch_dialog import BatchDialog
 from .gui.dev_mode_dialog import DevModeDialog
 from .gui.discord_settings_dialog import DiscordSettingsDialog
 from .gui.error_report_dialog import ErrorReportDialog
-from .gui.first_run_dialog import FirstRunDialog
+from .gui.first_run_dialog import CURRENT_TERMS_VERSION, FirstRunDialog
 from .gui.install_location_dialog import InstallLocationDialog
 from .gui.main_window import MainWindow
 from .gui.remote_room_dialog import RemoteRoomDialog, make_qr_pixmap
@@ -137,11 +137,12 @@ def run_app() -> int:
     else:
         settings.set_language(get_language())
 
-    if not settings.agreed_to_terms:
+    if settings.accepted_terms_version < CURRENT_TERMS_VERSION:
         dlg = FirstRunDialog()
         if dlg.exec() != FirstRunDialog.DialogCode.Accepted:
             return 0
         settings.agree_to_terms()
+        settings.set_accepted_terms_version(CURRENT_TERMS_VERSION)
 
     ctrl = AppController(paths, settings)
     window = MainWindow()
