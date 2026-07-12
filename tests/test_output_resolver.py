@@ -37,6 +37,38 @@ def test_resolve_from_history():
         assert result == mp4
 
 
+def test_resolve_from_history_gifs_key():
+    # VHS_VideoCombine は動画(mp4)を "gifs" キーに格納する。これを解決できること。
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outdir = Path(tmpdir)
+        job_id = "test_job"
+        prompt_id = "prompt_gifs"
+
+        subfolder = outdir / "makeAiFactory" / job_id
+        subfolder.mkdir(parents=True)
+        mp4 = subfolder / "output_00001.mp4"
+        mp4.write_bytes(b"fake mp4")
+
+        history = {
+            prompt_id: {
+                "outputs": {
+                    "188": {
+                        "gifs": [
+                            {
+                                "filename": "output_00001.mp4",
+                                "subfolder": f"makeAiFactory/{job_id}",
+                                "format": "video/h264-mp4",
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        result = resolve_output_mp4(history, prompt_id, outdir, job_id)
+        assert result == mp4
+
+
 def test_resolve_empty_history_not_found():
     """historyが空ならOutputNotFoundError (fallback探索は行わない)。"""
     with tempfile.TemporaryDirectory() as tmpdir:

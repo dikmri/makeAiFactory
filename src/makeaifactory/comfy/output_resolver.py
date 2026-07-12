@@ -23,17 +23,25 @@ def resolve_output_mp4(
     返してしまうことがないよう、fallback探索は一切行わない。
 
     優先順位:
-    1. ノード OUTPUT_VIDEO_NODE_ID (Save Video - Upscaled) の videos
-    2. 1が無い/採用できない場合、同entry内の他ノードの videos
+    1. ノード OUTPUT_VIDEO_NODE_ID (Save Video - Upscaled) の gifs/videos
+    2. 1が無い/採用できない場合、同entry内の他ノードの gifs/videos
        (いずれも prompt_id スコープ内なので安全)
+
+    VHS_VideoCombine は生成した動画(mp4)を history 上 "gifs" キーに格納する
+    (歴史的経緯によるキー名)。"videos" も併せて走査する。
     """
     entry = history.get(prompt_id, {})
     outputs = entry.get("outputs", {})
     out_root = comfyui_output_dir.resolve()
 
-    def _first_valid(videos: list[dict]) -> Path | None:
-        for v in videos:
+    def _entries(node_output: dict) -> list[dict]:
+        return list(node_output.get("gifs", [])) + list(node_output.get("videos", []))
+
+    def _first_valid(items: list[dict]) -> Path | None:
+        for v in items:
             filename = v.get("filename", "")
+            if not filename:
+                continue
             subfolder = v.get("subfolder", "")
             candidate = comfyui_output_dir / subfolder / filename
             resolved = candidate.resolve()
@@ -47,16 +55,16 @@ def resolve_output_mp4(
 
     # ノード188 (Save Video - Upscaled) の出力を優先
     if OUTPUT_VIDEO_NODE_ID in outputs:
-        found = _first_valid(outputs[OUTPUT_VIDEO_NODE_ID].get("videos", []))
+        found = _first_valid(_entries(outputs[OUTPUT_VIDEO_NODE_ID]))
         if found is not None:
             logger.info("output resolve: history経由(node%s) %s", OUTPUT_VIDEO_NODE_ID, found)
             return found
 
-    # 上記が無い/見つからない場合、同entry内の他ノードの videos を候補にする
+    # 上記が無い/見つからない場合、同entry内の他ノードの gifs/videos を候補にする
     for node_id, node_output in outputs.items():
         if node_id == OUTPUT_VIDEO_NODE_ID:
             continue
-        found = _first_valid(node_output.get("videos", []))
+        found = _first_valid(_entries(node_output))
         if found is not None:
             logger.info("output resolve: history経由(node%s) %s", node_id, found)
             return found
