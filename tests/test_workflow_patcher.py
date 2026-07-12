@@ -14,15 +14,18 @@ from makeaifactory.comfy.workflow_patcher import (
     make_output_prefix,
     patch_workflow,
 )
+from makeaifactory.comfy.workflow_sanitizer import sanitize_workflow
 
 
-TEMPLATE_JSON = Path(__file__).parent.parent / "app" / "workflow" / "makeAiFactory_runtime_template.json"
+# 実行時に再生成される runtime_template ではなく、コミット済みで不変の
+# presets/default.json をサニタイズしたものをテンプレートに使う (ヘルメチック化)。
+SOURCE_JSON = Path(__file__).parent.parent / "app" / "workflow" / "presets" / "default.json"
 
 
 @pytest.fixture
 def template():
-    with TEMPLATE_JSON.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    with SOURCE_JSON.open("r", encoding="utf-8") as f:
+        return sanitize_workflow(json.load(f))
 
 
 def test_image_patched(template):

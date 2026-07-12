@@ -9,7 +9,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from makeaifactory.comfy.workflow_sanitizer import sanitize_workflow, _collect_dependencies
 
 
-SOURCE_JSON = Path(__file__).parent.parent / "app" / "workflow" / "makeAiFactory_api_source.json"
+# 実行時に再生成される makeAiFactory_api_source.json ではなく、コミット済みで
+# 不変の presets/default.json を使う (テストをヘルメチックにし、CIのクリーン
+# チェックアウトでも安定させるため)。
+SOURCE_JSON = Path(__file__).parent.parent / "app" / "workflow" / "presets" / "default.json"
 
 
 @pytest.fixture
