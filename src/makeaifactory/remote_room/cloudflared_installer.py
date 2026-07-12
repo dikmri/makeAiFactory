@@ -1,6 +1,6 @@
 """cloudflared.exe の自動ダウンロード・キャッシュ管理。
 
-初回使用時に GitHub Releases から最新バイナリを取得し
+初回使用時に GitHub Releases から既知バージョンのバイナリを取得し
 runtime/cloudflared/cloudflared.exe にキャッシュする。
 以降はキャッシュを再利用するためダウンロードは1回のみ。
 """
@@ -10,14 +10,33 @@ import logging
 from pathlib import Path
 from typing import Callable
 
+from ..domain.errors import HashMismatchError
 from ..i18n import tr
+from ..runtime.hash_verifier import verify_sha256
 
 logger = logging.getLogger(__name__)
 
+# UPD-01対応: 以前は releases/latest を追跡していたため、アップストリームで
+# バイナリが差し替えられても検知できなかった(サプライチェーン攻撃・
+# ダウングレード・改竄への耐性が無かった)。既知バージョン + 期待SHA-256に
+# 固定し、ダウンロード後に検証してから使用する。
+#
+# バージョンを更新する際は CLOUDFLARED_VERSION と CLOUDFLARED_SHA256 を
+# 必ず両方更新すること。SHA-256は GitHub Releases API の該当アセットの
+# digest フィールド(sha256:...)、または実ファイルを自前でハッシュ化して
+# 取得する。
+CLOUDFLARED_VERSION = "2026.7.1"
 CLOUDFLARED_DOWNLOAD_URL = (
-    "https://github.com/cloudflare/cloudflared/releases/latest/download/"
-    "cloudflared-windows-amd64.exe"
+    f"https://github.com/cloudflare/cloudflared/releases/download/"
+    f"{CLOUDFLARED_VERSION}/cloudflared-windows-amd64.exe"
 )
+# 上記バージョンの cloudflared-windows-amd64.exe の期待SHA-256。
+# GitHub Releases API の digest フィールドから取得し、実ダウンロード結果の
+# 自前ハッシュ計算とも一致することを確認済み。
+# 値が空文字の場合は verify_sha256() が検証をスキップし警告ログのみ出す
+# (フォールバック)。TODO: CLOUDFLARED_VERSION を更新した際はここも
+# 必ず新しいdigestへ更新すること。
+CLOUDFLARED_SHA256 = "ccb0756de288d3c2c076d19764ca53e0849a10f2dd9c23f8656ac42bdeb45001"
 _MIN_SIZE_BYTES = 10 * 1024 * 1024  # 実際は ~35 MB。それ未満は不完全とみなす。
 
 
@@ -102,6 +121,17 @@ async def download_cloudflared(
     if not _is_valid_exe(tmp):
         tmp.unlink(missing_ok=True)
         raise RuntimeError(tr("ダウンロードしたファイルが有効な実行ファイルではありません。"))
+
+    # UPD-01: 使用前にSHA-256を検証する。CLOUDFLARED_SHA256が空の場合は
+    # verify_sha256() 側で警告ログのみ出して検証をスキップする(フォールバック)。
+    try:
+        verify_sha256(tmp, CLOUDFLARED_SHA256)
+    except HashMismatchError as e:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            tr("ダウンロードした cloudflared のSHA256が一致しません。"
+               "ファイルが破損しているか改ざんされている可能性があります。")
+        ) from e
 
     tmp.replace(dest)
     logger.info("cloudflared ダウンロード完了: %s (%.1f MB)", dest, dest.stat().st_size / 1024 / 1024)

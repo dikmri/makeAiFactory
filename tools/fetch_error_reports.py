@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -26,6 +27,28 @@ ROOT = Path(__file__).parent.parent
 OUT_DIR = ROOT / "devs" / "error_reports"
 ENV_FILE = ROOT / "devs" / ".env.error_reports"
 API_BASE = "https://discord.com/api/v10"
+
+# report_id として許可する形式: UUID(ハイフンあり/なし) または
+# Discordスノーフレーク(数字のみ、17〜20桁程度)。これ以外は保存しない
+# (report_idはそのままローカルディレクトリ名として使うため、"../" 等の
+# パストラバーサル文字列が紛れ込むのを許可リスト方式で防ぐ)。
+_UUID_DASHED_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_UUID_HEX_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+_SNOWFLAKE_RE = re.compile(r"^[0-9]{17,20}$")
+
+# 添付ファイル(log_excerpt等)を保存する際の先頭バイト上限。
+# 報告チャンネルにサイズの大きいファイルが投稿されても、ローカル保存が
+# 際限なく肥大化しないようにする。
+_MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024  # 2MB
+
+
+def _is_valid_report_id(s: str) -> bool:
+    """report_id が許可された形式(UUID または Discordスノーフレーク)かを判定する。"""
+    if not isinstance(s, str) or not s:
+        return False
+    return bool(_UUID_DASHED_RE.match(s) or _UUID_HEX_RE.match(s) or _SNOWFLAKE_RE.match(s))
 
 
 def _load_env_file(path: Path) -> None:
@@ -68,7 +91,19 @@ def save_report(message: dict) -> str | None:
     embed = embeds[0]
     report_id = _field_value(embed, "report_id") or message["id"]
 
+    if not _is_valid_report_id(report_id):
+        print(f"不正な report_id のためスキップ: {report_id!r}", file=sys.stderr)
+        return None
+
     report_dir = OUT_DIR / report_id
+
+    # 二重防御: _is_valid_report_id を通過した値でも、解決後のパスが
+    # OUT_DIR 直下から外れていないかを念のため確認する(パストラバーサル対策)。
+    out_dir_resolved = OUT_DIR.resolve()
+    if report_dir.resolve().parent != out_dir_resolved:
+        print(f"report_id の解決パスが不正なためスキップ: {report_id!r}", file=sys.stderr)
+        return None
+
     if report_dir.exists():
         return None  # 既に取得済み
 
@@ -83,7 +118,8 @@ def save_report(message: dict) -> str | None:
             continue
         resp = httpx.get(url, timeout=15.0)
         resp.raise_for_status()
-        (report_dir / "log_excerpt.txt").write_bytes(resp.content)
+        # 先頭 _MAX_ATTACHMENT_BYTES バイトのみ保存し、肥大化を防ぐ。
+        (report_dir / "log_excerpt.txt").write_bytes(resp.content[:_MAX_ATTACHMENT_BYTES])
         break
 
     return report_id

@@ -6,8 +6,12 @@ WORKFLOW_TEMPLATE_VERSION = "1"
 MANIFEST_VERSION = "1"
 
 # エラー報告(diagnostics.py/error_reporter.py)の送信先 Discord Webhook URL。
-# 投稿専用権限のみのためソースに残しても実害は小さいが、release.yml の
-# Secrets注入ステップでビルド時に実際の値へ置換する。空文字の間は報告機能を無効化する。
+# 配布ビルド(EXE)には埋め込まない方針(ERR-01)。Webhook URLをビルド成果物に
+# 焼き込むと、EXEから抽出されたURLへ第三者が任意投稿できる懸念があるため、
+# release.yml から Secrets注入ステップを削除済み。受信側API(投稿を認証・検証
+# できる仕組み)ができるまで、配布ビルドでの自動エラー報告は無効のままとする。
+# ローカル検証時は環境変数 MAF_ERROR_REPORT_WEBHOOK_URL で一時的に上書き可能
+# (error_reporter._webhook_url() 参照)。
 ERROR_REPORT_WEBHOOK_URL = ""
 
 COMFY_HOST = "127.0.0.1"
