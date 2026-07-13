@@ -27,10 +27,21 @@ from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..domain.errors import OutputNotFoundError
 from ..i18n import tr
+from ..remote_room.rate_limiter import RateLimiter
+from ..remote_room.upload_validator import validate_upload
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+# 添付画像の実体検証(サイズ・実形式・総画素)に使う既定値。
+# Remote Room (RemoteRoomConfig) の既定値と概ね同等にしている。
+_UPLOAD_MAX_MB = 20
+_UPLOAD_MAX_PX = 4096
+_UPLOAD_ALLOWED_EXTENSIONS = ("jpg", "jpeg", "png", "webp")
+
+# ユーザー単位のクールダウン秒数(連投による負荷/乱用を防ぐ fail-closed 対策)
+_USER_COOLDOWN_SECONDS = 90
 
 # プリセット別の1動画あたり推定生成時間（分）
 _PRESET_WAIT_MIN: dict[str, int] = {"normal": 15, "lite": 10, "ultralite": 8}
@@ -80,11 +91,32 @@ def _patch_broken_orjson() -> None:
 
 _patch_broken_orjson()
 del _patch_broken_orjson
-_MAX_QUEUE_SIZE = 100
+# fail-closed 化: 際限なく受け付けず、混雑時は早めに「集中しています」で断る
+_MAX_QUEUE_SIZE = 8
 
 
 class _CancelledError(Exception):
     pass
+
+
+def is_channel_allowed(channel_id: int, allowed: list[int]) -> bool:
+    """チャンネル許可判定 (fail-closed)。
+
+    allowed が空の場合は「未設定」ではなく「どのチャンネルも許可しない」とみなす。
+    設定ダイアログ側で有効化時に1件以上のチャンネルIDを必須にしているが、
+    ここでも防御的に空リストを拒否側として扱う。
+    """
+    if not allowed:
+        return False
+    return channel_id in allowed
+
+
+def is_dm(guild) -> bool:
+    """DM (ギルド外のメッセージ) かどうかを判定する。
+
+    discord.py では guild 外 (DM) のメッセージは Message.guild が None になる。
+    """
+    return guild is None
 
 
 class DiscordBotSignals(QObject):
@@ -112,6 +144,8 @@ class DiscordBotController:
         # 割り込み生成用: バッチ中に Discord リクエストが来たことを示す threading.Event
         self._interrupt_active = threading.Event()
         self._batch_mode: bool = False       # app.py がバッチ開始/終了時にセット
+        # ユーザー単位のクールダウン管理 (fail-closed 化: 連投・乱用を防ぐ)
+        self._rate_limiter = RateLimiter(cooldown_seconds=_USER_COOLDOWN_SECONDS)
 
     @property
     def signals(self) -> DiscordBotSignals:
@@ -267,8 +301,12 @@ class DiscordBotController:
         if message.author.bot:
             return
 
+        # DM (ギルド外) からのリクエストは fail-closed で無視する
+        if is_dm(message.guild):
+            return
+
         channel_ids = self._settings.discord_channel_ids
-        if channel_ids and message.channel.id not in channel_ids:
+        if not is_channel_allowed(message.channel.id, channel_ids):
             return
 
         image_att = next(
@@ -277,6 +315,34 @@ class DiscordBotController:
             None,
         )
         if image_att is None:
+            return
+
+        # ユーザー単位のクールダウン (連投による負荷/乱用を防ぐ)
+        user_key = str(message.author.id)
+        if not self._rate_limiter.is_allowed(user_key):
+            remaining = self._rate_limiter.seconds_until_allowed(user_key)
+            await message.reply(
+                f"連続でのリクエストはご遠慮ください🙏\nあと {remaining} 秒ほどお待ちください。"
+            )
+            return
+
+        # 添付画像の実体検証 (拡張子偽装・サイズ超過・圧縮爆弾等を拒否)
+        raw_bytes = await image_att.read()
+        _validated_png, validation_err = await validate_upload(
+            raw_bytes,
+            image_att.filename,
+            _UPLOAD_MAX_MB,
+            _UPLOAD_MAX_PX,
+            _UPLOAD_ALLOWED_EXTENSIONS,
+        )
+        if validation_err:
+            logger.warning(
+                "Discord 添付画像を却下: code=%s file=%s", validation_err, image_att.filename
+            )
+            await message.reply(
+                "申し訳ありません🙏\n"
+                "この画像は受け付けられませんでした。別の画像でお試しください。"
+            )
             return
 
         workflow = _resolve_workflow(message.content)
@@ -295,6 +361,7 @@ class DiscordBotController:
                     return
                 self._interrupt_active.set()
                 pos = self._queue.qsize() + 1
+                self._rate_limiter.record_job(user_key)
                 await message.reply(self._receipt_msg(pos, is_interrupt=True, workflow_label=workflow_label))
                 await self._queue.put((message, image_att, True, workflow))
                 return
@@ -311,6 +378,7 @@ class DiscordBotController:
             return
 
         pos = self._queue.qsize() + 1
+        self._rate_limiter.record_job(user_key)
         await message.reply(self._receipt_msg(pos, is_interrupt=False, workflow_label=workflow_label))
         await self._queue.put((message, image_att, False, workflow))
 

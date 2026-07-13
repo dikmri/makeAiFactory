@@ -31,6 +31,18 @@ from ..i18n import tr
 _DISCORD_API = "https://discord.com/api/v10/users/@me"
 
 
+def valid_enabled_channels(enabled: bool, channel_ids: list[int]) -> bool:
+    """設定保存時のチャンネルID検証 (fail-closed)。
+
+    有効化 (enabled=True) する場合は、監視チャンネルIDが1件以上必須。
+    「空欄=全チャンネル」を許すと Bot がどのチャンネルにも反応してしまうため、
+    無効化 (enabled=False) 以外は必ず1件以上のチャンネルIDを要求する。
+    """
+    if not enabled:
+        return True
+    return len(channel_ids) > 0
+
+
 class DiscordSettingsDialog(QDialog):
     # テストスレッドから main thread への結果通知 (status_code, status_text)
     _test_result = Signal(str, str)
@@ -87,7 +99,7 @@ class DiscordSettingsDialog(QDialog):
         layout.addSpacing(4)
 
         # ── チャンネルID 入力 ─────────────────────────────────────────
-        layout.addWidget(self._make_label(tr("監視チャンネルID（カンマ区切り、空欄 = 全チャンネル）:")))
+        layout.addWidget(self._make_label(tr("監視チャンネルID（カンマ区切り、1つ以上のチャンネルIDが必要）:")))
         self._channels_edit = QLineEdit()
         self._channels_edit.setPlaceholderText(tr("例: 1234567890, 9876543210"))
         layout.addWidget(self._channels_edit)
@@ -190,6 +202,14 @@ class DiscordSettingsDialog(QDialog):
         token = self._token_edit.text().strip()
         channel_ids = self._parse_channel_ids()
         interrupt = self._interrupt_cb.isChecked()
+        # fail-closed: 有効化する場合は監視チャンネルIDが1件以上無いと保存を拒否する
+        # (空欄=全チャンネル許可だと Bot がどのチャンネルにも反応してしまうため)
+        if not valid_enabled_channels(enabled, channel_ids):
+            self.update_bot_status(
+                "error",
+                tr("エラー: 有効にする場合は監視チャンネルIDを1つ以上入力してください"),
+            )
+            return
         self.update_bot_status("saving", tr("保存中..."))
         if self._save_callback:
             self._save_callback(enabled, token, channel_ids, interrupt)
