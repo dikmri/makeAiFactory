@@ -8,6 +8,7 @@ from pathlib import Path
 from ..domain.errors import SetupError
 from ..domain.manifest import CustomNodeEntry, CustomNodesManifest
 from .downloader import download_file
+from .safe_extract import resolve_safe_member_path
 from .uv_manager import UvManager
 
 logger = logging.getLogger(__name__)
@@ -81,8 +82,13 @@ async def _install_one_node(
         with zipfile.ZipFile(zip_path, "r") as zf:
             members = zf.namelist()
             prefix = members[0].split("/")[0] + "/"
-            for member in members:
-                target = node_dir / member[len(prefix):]
+            # zip-slip対策: 展開前に全メンバの展開先を検証する(1件でも
+            # node_dir の外を指すメンバがあれば例外を送出し、何も書き込まない)
+            member_targets = [
+                (member, resolve_safe_member_path(node_dir, member[len(prefix):]))
+                for member in members
+            ]
+            for member, target in member_targets:
                 if member.endswith("/"):
                     target.mkdir(parents=True, exist_ok=True)
                 else:

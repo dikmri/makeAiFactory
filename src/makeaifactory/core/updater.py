@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 from typing import Callable, NamedTuple
 
@@ -17,6 +16,7 @@ import httpx
 from ..constants import APP_VERSION, GITHUB_REPO
 from ..domain.errors import HashMismatchError
 from ..runtime.hash_verifier import verify_sha256
+from ..runtime.safe_extract import safe_extract_zip
 
 logger = logging.getLogger(__name__)
 
@@ -244,8 +244,8 @@ def apply_update_and_restart(zip_path: Path) -> None:
         shutil.rmtree(extract_dir, ignore_errors=True)
 
     logger.info("Extracting %s -> %s", zip_path, extract_dir)
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(extract_dir)
+    # zip-slip対策: メンバの展開先が extract_dir 配下に収まることを検証してから展開する
+    safe_extract_zip(zip_path, extract_dir)
 
     # ZIP のトップレベルにサブディレクトリが 1 つだけある場合はそれを使う
     entries = list(extract_dir.iterdir())
