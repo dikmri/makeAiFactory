@@ -15,6 +15,30 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, int, int, int, int], None]  # name, downloaded, total, file_index, total_files
 
 
+def is_model_valid(path: Path, entry: ModelEntry, level: str = "exists") -> bool:
+    """モデルファイルの妥当性を判定する。
+
+    「存在する」ことと「正常(hash)である」ことを区別するための判定関数。
+    存在チェックのみだとサイズ0や途中DLの破損ファイルを導入済みとみなしてしまうため、
+    通常起動時も size_bytes 一致まで確認する軽量判定を既定とする。
+
+    level="exists": 存在し、size_bytes が一致すること(0や途中DLを弾く軽量判定。通常起動向け)。
+        - entry.size_bytes が 0/未設定なら存在のみで可とする。
+    level="hash":    さらに SHA-256 が一致すること(DL完了直後・修復時の厳密判定)。
+        - entry.sha256 が未設定なら size 一致のみで可とする(verify_sha256 側の仕様に準拠)。
+    """
+    if not path.exists():
+        return False
+    if entry.size_bytes and path.stat().st_size != entry.size_bytes:
+        return False
+    if level == "hash":
+        try:
+            verify_sha256(path, entry.sha256)
+        except Exception:
+            return False
+    return True
+
+
 def _needed_models(manifest: ModelManifest, presets: list[str]) -> list[ModelEntry]:
     """指定プリセット群で必要なモデルエントリを返す（重複なし）。"""
     result: list[ModelEntry] = []
@@ -41,7 +65,7 @@ def check_disk_space(
     models = _needed_models(manifest, presets)
     missing_bytes = sum(
         m.size_bytes for m in models
-        if not m.required_manual and not (runtime_root / m.target).exists()
+        if not m.required_manual and not is_model_valid(runtime_root / m.target, m, "exists")
     )
     needed_gb = missing_bytes / (1024 ** 3) + buffer_gb
     import shutil
@@ -61,7 +85,7 @@ def get_missing_models(
         presets = ["normal"]
     missing = []
     for model in _needed_models(manifest, presets):
-        if not (runtime_root / model.target).exists():
+        if not is_model_valid(runtime_root / model.target, model, "exists"):
             missing.append(model)
     return missing
 
@@ -75,7 +99,7 @@ def estimate_download_bytes(
     return sum(
         m.size_bytes
         for m in _needed_models(manifest, presets)
-        if not m.required_manual and not (runtime_root / m.target).exists()
+        if not m.required_manual and not is_model_valid(runtime_root / m.target, m, "exists")
     )
 
 
@@ -94,12 +118,10 @@ async def install_models(
             continue
         target = runtime_root / model.target
         if target.exists():
-            try:
-                verify_sha256(target, model.sha256)
+            if is_model_valid(target, model, "hash"):
                 logger.info("モデル確認OK: %s", model.name)
                 continue
-            except Exception:
-                logger.warning("SHA256不一致。再DLします: %s", model.name)
+            logger.warning("SHA256不一致。再DLします: %s", model.name)
 
         if model.required_manual:
             logger.warning("手動配置が必要なモデル: %s → %s", model.name, model.target)
@@ -142,7 +164,7 @@ def get_missing_workflow_models(
     for m in workflow_models(manifest, workflow_id):
         if not m.required or m.required_manual:
             continue
-        if not (runtime_root / m.target).exists():
+        if not is_model_valid(runtime_root / m.target, m, "exists"):
             missing.append(m)
     return missing
 
@@ -159,12 +181,10 @@ async def install_specific_models(
             continue
         target = runtime_root / model.target
         if target.exists():
-            try:
-                verify_sha256(target, model.sha256)
+            if is_model_valid(target, model, "hash"):
                 logger.info("モデル確認OK: %s", model.name)
                 continue
-            except Exception:
-                logger.warning("SHA256不一致。再DLします: %s", model.name)
+            logger.warning("SHA256不一致。再DLします: %s", model.name)
         if model.required_manual:
             logger.warning("手動配置が必要なモデル: %s → %s", model.name, model.target)
             continue
@@ -200,7 +220,7 @@ def check_required_models_present(
     for model in _needed_models(manifest, presets):
         if not model.required or model.required_manual:
             continue
-        if not (runtime_root / model.target).exists():
+        if not is_model_valid(runtime_root / model.target, model, "exists"):
             missing_names.append(model.name)
     if missing_names:
         raise MissingModelError(missing_names)
