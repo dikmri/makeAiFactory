@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import random
@@ -10,7 +9,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from ..comfy.api_client import ComfyApiClient
-from ..comfy.output_resolver import resolve_output_mp4
 from ..comfy.progress_tracker import ProgressTracker, build_node_labels, count_progress_stages
 from ..comfy.workflow_patcher import (
     DevModeOverrides,
@@ -20,6 +18,7 @@ from ..comfy.workflow_patcher import (
     patch_workflow,
 )
 from ..comfy.server_controller import ComfyServerController
+from ..core.generation_executor import resolve_output_with_retry
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..core.vram_monitor import RamMonitor, VramMonitor
@@ -159,28 +158,19 @@ class JobController:
 
         # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
         # (成功しているのに失敗扱いにしないための安全弁。history取得自体は毎回やり直す)
-        history: dict = {}
-        output_mp4: Path | None = None
-        last_error: OutputNotFoundError | None = None
-        for attempt in range(3):
-            history = await client.get_history(prompt_id)
-            try:
-                output_mp4 = resolve_output_mp4(
-                    history,
-                    prompt_id,
-                    self._paths.comfyui_output_dir,
-                    job.job_id,
-                )
-                break
-            except OutputNotFoundError as e:
-                last_error = e
-                if attempt < 2:
-                    await asyncio.sleep(0.3)
-        with (job_dir / "history.json").open("w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-        if output_mp4 is None:
-            assert last_error is not None
-            raise last_error
+        def _save_history(h: dict) -> None:
+            with (job_dir / "history.json").open("w", encoding="utf-8") as f:
+                json.dump(h, f, ensure_ascii=False, indent=2)
+
+        try:
+            output_mp4, history = await resolve_output_with_retry(
+                client, prompt_id, self._paths.comfyui_output_dir, job.job_id,
+            )
+        except OutputNotFoundError as e:
+            # 既存挙動を維持: 失敗時もhistory.jsonを保存してからraiseする
+            _save_history(getattr(e, "history", {}))
+            raise
+        _save_history(history)
 
         final_output = job_dir / "output.mp4"
         shutil.copy2(output_mp4, final_output)

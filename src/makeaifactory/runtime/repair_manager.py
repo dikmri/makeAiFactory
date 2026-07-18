@@ -15,6 +15,11 @@ def can_start_repair(bot_state: str) -> bool:
 
     生成ジョブ実行中 (single/batch) は、GUIスレッド操作やComfyUI停止が
     ジョブと競合するため修復を開始しない。それ以外 (idle/offline等) はOK。
+
+    非推奨 (SCH-01/PR1): app.py の修復トリガーは GenerationGate.try_acquire("desktop")
+    に置き換わった (read → 判定のTOCTOUを無くし、修復中は他経路からの生成も
+    ブロックできるようにするため)。この関数自体は純ロジックとして他に実害が
+    無いため削除はしていないが、新規の呼び出し追加は避けること。
     """
     return bot_state not in ("single", "batch")
 

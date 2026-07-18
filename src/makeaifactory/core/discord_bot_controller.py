@@ -6,7 +6,6 @@ Signal は PySide6 の内部でスレッドセーフに処理される（QueuedC
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
 import shutil
@@ -18,14 +17,14 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
-from ..comfy.output_resolver import resolve_output_mp4
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
-from ..core.bot_state import read_bot_state, write_bot_state
+from ..core.bot_state import read_bot_state
+from ..core.generation_executor import load_template_for_workflow, resolve_output_with_retry
+from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
-from ..domain.errors import OutputNotFoundError
 from ..i18n import tr
 from ..remote_room.rate_limiter import RateLimiter
 from ..remote_room.upload_validator import validate_upload
@@ -131,9 +130,14 @@ class DiscordBotSignals(QObject):
 
 
 class DiscordBotController:
-    def __init__(self, settings: SettingsStore, paths: AppPaths) -> None:
+    def __init__(self, settings: SettingsStore, paths: AppPaths, gate: GenerationGate | None = None) -> None:
         self._settings = settings
         self._paths = paths
+        # 生成admissionゲート。app.py から共有インスタンスを受け取るのが通常経路。
+        # 未指定 (単体テスト等) の場合はbot_stateミラー無しの単独インスタンスを持つ
+        # (スタンドアロン discord_bot.py はこのクラスを使わず bot_state.json を
+        # 直接読むだけなので、この分岐の有無に影響されない)。
+        self._gate = gate if gate is not None else GenerationGate(None)
         self._signals = DiscordBotSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -255,8 +259,9 @@ class DiscordBotController:
             user = self._discord_client.user
             logger.info("Discord Bot 起動: %s", user)
             self._signals.status_changed.emit("connected", tr("接続完了: {user}").format(user=user))
-            # bot_state.json を更新して「アイドル状態・準備完了」を記録する
-            write_bot_state(self._paths.runtime_root, "idle")
+            # bot_state.json を gate の現在状態で書き直す (固定で"idle"にすると、
+            # 生成実行中の再接続で他経路の状態をclobberしてしまうため)
+            self._gate.refresh_bot_state()
 
         @self._discord_client.event
         async def on_disconnect() -> None:
@@ -270,7 +275,7 @@ class DiscordBotController:
             user = self._discord_client.user
             logger.info("Discord Bot セッション再開: %s", user)
             self._signals.status_changed.emit("connected", tr("接続完了: {user}").format(user=user))
-            write_bot_state(self._paths.runtime_root, "idle")
+            self._gate.refresh_bot_state()
 
         @self._discord_client.event
         async def on_message(message) -> None:
@@ -387,19 +392,19 @@ class DiscordBotController:
     async def _keep_state_alive(self) -> None:
         """bot_state.json のタイムスタンプを 90 秒ごとに更新する。
 
-        read_bot_state() は 5 分以上更新がないと "offline" を返すため、
-        現在の state ("idle" / "single" / "batch") を維持したまま
-        タイムスタンプだけ更新する (固定で "idle" に書き換えると
-        バッチ実行中の状態を誤って消してしまうため)。
+        read_bot_state() は 5 分以上更新がないと "offline" を返すため、定期的な
+        更新が必要。以前は read-modify-write (現在の状態を読んでから書き戻す)
+        していたが、これだとメインスレッド (Desktop/バッチ) が直後に書いた
+        最新状態を、ここで読み取った古い値で上書きしてしまう競合があった。
+        GenerationGate.refresh_bot_state() はプロセス内で保持している現在状態
+        (holder/batch_active) をそのまま書き直すだけなので、read-modify-write
+        自体が発生せず、この競合が起きない。
         """
         while True:
             await asyncio.sleep(90)
             if self._running:
-                current_state, current_port = read_bot_state(self._paths.runtime_root)
-                if current_state == "offline":
-                    current_state = "idle"
-                write_bot_state(self._paths.runtime_root, current_state, current_port)
-                logger.debug("bot_state.json 更新 (keep-alive, state=%s)", current_state)
+                self._gate.refresh_bot_state()
+                logger.debug("bot_state.json 更新 (keep-alive)")
 
     # ── ワーカーループ ─────────────────────────────────────────────────────
 
@@ -436,14 +441,18 @@ class DiscordBotController:
         self._cancel_requested.clear()
 
         # デキュー直前の状態確認 (割り込みキュー経由のリクエストは常に処理する)
-        state, comfy_port = read_bot_state(self._paths.runtime_root)
-        if state == "batch" and not is_interrupt:
+        if self._gate.batch_active and not is_interrupt:
             await message.reply(
                 "申し訳ありません🙏\n"
                 "フォルダ生成が始まったため、このリクエストはキャンセルされてしまいました。\n"
                 "フォルダ生成が完了してから再度お試しください。"
             )
             return
+        comfy_port = self._gate.comfy_port
+        if comfy_port == 0:
+            # gate.set_comfy_port() が未実行 (runtime_root未指定のスタンドアロン相当の
+            # 呼び出し等) の場合は、従来どおり bot_state.json から直接フォールバックする
+            _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
         if comfy_port == 0:
             await message.reply("ComfyUI のポートが不明です。アプリを再起動してください。")
             return
@@ -470,13 +479,25 @@ class DiscordBotController:
                 # 通常モードは即座に表示 (他の画像と競合しないため早期表示で問題ない)
                 _emit_started()
 
-            gen_start = _time.monotonic()
-            # 割り込みの場合、実際に ComfyUI が生成を開始するまでプレビュー切替を遅らせる
-            # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
-            output_path = await self._generate_video(
-                image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
-                workflow=workflow,
+            # 実際の生成 (ComfyUIへのqueue_prompt) 直前でgateを取得する。取れなければ
+            # (待機中にBotが停止された等でキャンセル扱いになった場合) は既存の
+            # _CancelledError系フローに合流させる。
+            lease = await self._gate.wait_acquire(
+                "discord", cancel_check=self._cancel_requested.is_set,
             )
+            if lease is None:
+                raise _CancelledError()
+
+            gen_start = _time.monotonic()
+            try:
+                # 割り込みの場合、実際に ComfyUI が生成を開始するまでプレビュー切替を遅らせる
+                # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
+                output_path = await self._generate_video(
+                    image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
+                    workflow=workflow,
+                )
+            finally:
+                self._gate.release(lease)
             _emit_started()  # フォールバック: execution_start を観測できなかった場合も必ず発火
             elapsed = _time.monotonic() - gen_start
 
@@ -512,20 +533,7 @@ class DiscordBotController:
         # ジョブにワークフロー指定があれば、そのワークフロー用にサニタイズ済みの
         # テンプレートを使う (build_workflow_templates() で templates/<wf>.json へ生成済み)。
         # 無ければアプリでアクティブな runtime_template にフォールバックする。
-        template_path = self._paths.runtime_template_json()
-        if workflow:
-            wf_path = self._paths.runtime_root / "remote_room" / "templates" / f"{workflow}.json"
-            if wf_path.exists():
-                template_path = wf_path
-                logger.info("Discord ワークフロー指定: %s (%s)", workflow, wf_path.name)
-            else:
-                logger.warning(
-                    "Discord ワークフローテンプレート未生成: %s → 既定にフォールバック", workflow
-                )
-        if not template_path.exists():
-            raise FileNotFoundError(f"ワークフローテンプレートが見つかりません: {template_path}")
-        with template_path.open(encoding="utf-8") as f:
-            template = json.load(f)
+        template = load_template_for_workflow(self._paths, workflow)
 
         job_id = uuid.uuid4().hex[:8]
         date_str = datetime.now().strftime("%Y%m%d")
@@ -576,20 +584,9 @@ class DiscordBotController:
                 raise _CancelledError()
 
             # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
-            output_mp4: Path | None = None
-            last_error: OutputNotFoundError | None = None
-            for attempt in range(3):
-                history = await client.get_history(prompt_id)
-                try:
-                    output_mp4 = resolve_output_mp4(history, prompt_id, self._paths.comfyui_output_dir, job_id)
-                    break
-                except OutputNotFoundError as e:
-                    last_error = e
-                    if attempt < 2:
-                        await asyncio.sleep(0.3)
-            if output_mp4 is None:
-                assert last_error is not None
-                raise last_error
+            output_mp4, _history = await resolve_output_with_retry(
+                client, prompt_id, self._paths.comfyui_output_dir, job_id,
+            )
 
             final_output = job_dir / "output.mp4"
             shutil.copy2(output_mp4, final_output)

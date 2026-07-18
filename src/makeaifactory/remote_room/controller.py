@@ -20,14 +20,14 @@ from typing import Callable
 from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
-from ..comfy.output_resolver import resolve_output_mp4
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
+from ..core.generation_executor import load_template_for_workflow, resolve_output_with_retry
+from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
-from ..domain.errors import OutputNotFoundError
 from ..i18n import tr
 from .auth import AuthManager
 from .rate_limiter import RateLimiter
@@ -55,9 +55,21 @@ def _generate_pin() -> str:
 
 
 class RemoteRoomController:
-    def __init__(self, settings: SettingsStore, paths: AppPaths) -> None:
+    def __init__(
+        self,
+        settings: SettingsStore,
+        paths: AppPaths,
+        gate: GenerationGate | None = None,
+        owner: str = "remote",
+    ) -> None:
         self._settings = settings
         self._paths = paths
+        # 生成admissionゲート。app.py/AppController から共有インスタンスを受け取るのが
+        # 通常経路。未指定 (単体テスト等) の場合はbot_stateミラー無しの単独インスタンス。
+        self._gate = gate if gate is not None else GenerationGate(None)
+        # インターネット投入口 (owner="remote") とローカルブリッジ (owner="bridge") は
+        # 同じ RemoteRoomController 実装を使い回すため、gate上のowner名で区別する。
+        self._owner = owner
         self._signals = RemoteRoomSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -334,17 +346,34 @@ class RemoteRoomController:
         assert self._config is not None
 
         # フォルダバッチ生成中はリジェクト
-        state, comfy_port = read_bot_state(self._paths.runtime_root)
-        if state == "batch":
+        if self._gate.batch_active:
             job.status = "failed"
             job.completed_at = datetime.now()
             job.error_message = "現在フォルダ一括生成中のため受付できません。"
             self._emit_stats()
             return
+        comfy_port = self._gate.comfy_port
+        if comfy_port == 0:
+            # gate.set_comfy_port() が未実行 (単体テスト等) の場合は、従来どおり
+            # bot_state.json から直接フォールバックする
+            _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
         if comfy_port == 0:
             job.status = "failed"
             job.completed_at = datetime.now()
             job.error_message = "ComfyUI のポートが不明です。アプリを再起動してください。"
+            self._emit_stats()
+            return
+
+        # デキュー済みだが実際の生成開始前にgateを取得する。取得待ち中に
+        # キャンセルされた (ジョブ自体がcancelled化、あるいはコントローラ停止) 場合は
+        # 待たずに終了する。
+        lease = await self._gate.wait_acquire(
+            self._owner, cancel_check=lambda: job.status == "cancelled" or not self._running,
+        )
+        if lease is None:
+            job.status = "cancelled"
+            job.completed_at = datetime.now()
+            job.error_message = "生成待機中にキャンセルされました。"
             self._emit_stats()
             return
 
@@ -375,6 +404,8 @@ class RemoteRoomController:
             self._signals.job_error.emit(job.job_id, str(e))
             self._emit_stats()
             raise
+        finally:
+            self._gate.release(lease)
 
     def _on_job_progress(self, job: RemoteJob, pct: float, label: str) -> None:
         job.progress_pct = pct
@@ -396,20 +427,7 @@ class RemoteRoomController:
         # ジョブにワークフロー指定があれば、そのワークフロー用にサニタイズ済みの
         # テンプレートを使う (ローカルブリッジ起動時に templates/<wf>.json へ生成済み)。
         # 無ければアプリでアクティブな runtime_template にフォールバックする。
-        template_path = self._paths.runtime_template_json()
-        if job.workflow:
-            wf_path = self._paths.runtime_root / "remote_room" / "templates" / f"{job.workflow}.json"
-            if wf_path.exists():
-                template_path = wf_path
-                logger.info("RemoteRoom ワークフロー指定: %s (%s)", job.workflow, wf_path.name)
-            else:
-                logger.warning(
-                    "RemoteRoom ワークフローテンプレート未生成: %s → 既定にフォールバック", job.workflow
-                )
-        if not template_path.exists():
-            raise FileNotFoundError(f"ワークフローテンプレートが見つかりません: {template_path}")
-        with template_path.open(encoding="utf-8") as f:
-            template = json.load(f)
+        template = load_template_for_workflow(self._paths, job.workflow)
 
         job_dir = Path(job.image_path).parent
         base_url = f"http://{COMFY_HOST}:{comfy_port}"
@@ -452,20 +470,9 @@ class RemoteRoomController:
             on_progress(92.0, tr("動画を保存中..."))
 
             # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
-            output_mp4: Path | None = None
-            last_error: OutputNotFoundError | None = None
-            for attempt in range(3):
-                history = await client.get_history(prompt_id)
-                try:
-                    output_mp4 = resolve_output_mp4(history, prompt_id, self._paths.comfyui_output_dir, job.job_id)
-                    break
-                except OutputNotFoundError as e:
-                    last_error = e
-                    if attempt < 2:
-                        await asyncio.sleep(0.3)
-            if output_mp4 is None:
-                assert last_error is not None
-                raise last_error
+            output_mp4, _history = await resolve_output_with_retry(
+                client, prompt_id, self._paths.comfyui_output_dir, job.job_id,
+            )
 
             final_output = job_dir / "output.mp4"
             shutil.copy2(output_mp4, final_output)
