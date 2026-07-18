@@ -6,7 +6,6 @@ Signal は PySide6 の内部でスレッドセーフに処理される（QueuedC
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
 import shutil
@@ -18,15 +17,14 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
-from ..comfy.output_resolver import resolve_output_mp4
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
+from ..core.generation_executor import load_template_for_workflow, resolve_output_with_retry
 from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
-from ..domain.errors import OutputNotFoundError
 from ..i18n import tr
 from ..remote_room.rate_limiter import RateLimiter
 from ..remote_room.upload_validator import validate_upload
@@ -535,20 +533,7 @@ class DiscordBotController:
         # ジョブにワークフロー指定があれば、そのワークフロー用にサニタイズ済みの
         # テンプレートを使う (build_workflow_templates() で templates/<wf>.json へ生成済み)。
         # 無ければアプリでアクティブな runtime_template にフォールバックする。
-        template_path = self._paths.runtime_template_json()
-        if workflow:
-            wf_path = self._paths.runtime_root / "remote_room" / "templates" / f"{workflow}.json"
-            if wf_path.exists():
-                template_path = wf_path
-                logger.info("Discord ワークフロー指定: %s (%s)", workflow, wf_path.name)
-            else:
-                logger.warning(
-                    "Discord ワークフローテンプレート未生成: %s → 既定にフォールバック", workflow
-                )
-        if not template_path.exists():
-            raise FileNotFoundError(f"ワークフローテンプレートが見つかりません: {template_path}")
-        with template_path.open(encoding="utf-8") as f:
-            template = json.load(f)
+        template = load_template_for_workflow(self._paths, workflow)
 
         job_id = uuid.uuid4().hex[:8]
         date_str = datetime.now().strftime("%Y%m%d")
@@ -599,20 +584,9 @@ class DiscordBotController:
                 raise _CancelledError()
 
             # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
-            output_mp4: Path | None = None
-            last_error: OutputNotFoundError | None = None
-            for attempt in range(3):
-                history = await client.get_history(prompt_id)
-                try:
-                    output_mp4 = resolve_output_mp4(history, prompt_id, self._paths.comfyui_output_dir, job_id)
-                    break
-                except OutputNotFoundError as e:
-                    last_error = e
-                    if attempt < 2:
-                        await asyncio.sleep(0.3)
-            if output_mp4 is None:
-                assert last_error is not None
-                raise last_error
+            output_mp4, _history = await resolve_output_with_retry(
+                client, prompt_id, self._paths.comfyui_output_dir, job_id,
+            )
 
             final_output = job_dir / "output.mp4"
             shutil.copy2(output_mp4, final_output)
