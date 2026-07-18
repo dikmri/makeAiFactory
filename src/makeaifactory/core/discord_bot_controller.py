@@ -22,7 +22,8 @@ from ..comfy.output_resolver import resolve_output_mp4
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
-from ..core.bot_state import read_bot_state, write_bot_state
+from ..core.bot_state import read_bot_state
+from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..domain.errors import OutputNotFoundError
@@ -131,9 +132,14 @@ class DiscordBotSignals(QObject):
 
 
 class DiscordBotController:
-    def __init__(self, settings: SettingsStore, paths: AppPaths) -> None:
+    def __init__(self, settings: SettingsStore, paths: AppPaths, gate: GenerationGate | None = None) -> None:
         self._settings = settings
         self._paths = paths
+        # 生成admissionゲート。app.py から共有インスタンスを受け取るのが通常経路。
+        # 未指定 (単体テスト等) の場合はbot_stateミラー無しの単独インスタンスを持つ
+        # (スタンドアロン discord_bot.py はこのクラスを使わず bot_state.json を
+        # 直接読むだけなので、この分岐の有無に影響されない)。
+        self._gate = gate if gate is not None else GenerationGate(None)
         self._signals = DiscordBotSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -255,8 +261,9 @@ class DiscordBotController:
             user = self._discord_client.user
             logger.info("Discord Bot 起動: %s", user)
             self._signals.status_changed.emit("connected", tr("接続完了: {user}").format(user=user))
-            # bot_state.json を更新して「アイドル状態・準備完了」を記録する
-            write_bot_state(self._paths.runtime_root, "idle")
+            # bot_state.json を gate の現在状態で書き直す (固定で"idle"にすると、
+            # 生成実行中の再接続で他経路の状態をclobberしてしまうため)
+            self._gate.refresh_bot_state()
 
         @self._discord_client.event
         async def on_disconnect() -> None:
@@ -270,7 +277,7 @@ class DiscordBotController:
             user = self._discord_client.user
             logger.info("Discord Bot セッション再開: %s", user)
             self._signals.status_changed.emit("connected", tr("接続完了: {user}").format(user=user))
-            write_bot_state(self._paths.runtime_root, "idle")
+            self._gate.refresh_bot_state()
 
         @self._discord_client.event
         async def on_message(message) -> None:
@@ -387,19 +394,19 @@ class DiscordBotController:
     async def _keep_state_alive(self) -> None:
         """bot_state.json のタイムスタンプを 90 秒ごとに更新する。
 
-        read_bot_state() は 5 分以上更新がないと "offline" を返すため、
-        現在の state ("idle" / "single" / "batch") を維持したまま
-        タイムスタンプだけ更新する (固定で "idle" に書き換えると
-        バッチ実行中の状態を誤って消してしまうため)。
+        read_bot_state() は 5 分以上更新がないと "offline" を返すため、定期的な
+        更新が必要。以前は read-modify-write (現在の状態を読んでから書き戻す)
+        していたが、これだとメインスレッド (Desktop/バッチ) が直後に書いた
+        最新状態を、ここで読み取った古い値で上書きしてしまう競合があった。
+        GenerationGate.refresh_bot_state() はプロセス内で保持している現在状態
+        (holder/batch_active) をそのまま書き直すだけなので、read-modify-write
+        自体が発生せず、この競合が起きない。
         """
         while True:
             await asyncio.sleep(90)
             if self._running:
-                current_state, current_port = read_bot_state(self._paths.runtime_root)
-                if current_state == "offline":
-                    current_state = "idle"
-                write_bot_state(self._paths.runtime_root, current_state, current_port)
-                logger.debug("bot_state.json 更新 (keep-alive, state=%s)", current_state)
+                self._gate.refresh_bot_state()
+                logger.debug("bot_state.json 更新 (keep-alive)")
 
     # ── ワーカーループ ─────────────────────────────────────────────────────
 
@@ -436,14 +443,18 @@ class DiscordBotController:
         self._cancel_requested.clear()
 
         # デキュー直前の状態確認 (割り込みキュー経由のリクエストは常に処理する)
-        state, comfy_port = read_bot_state(self._paths.runtime_root)
-        if state == "batch" and not is_interrupt:
+        if self._gate.batch_active and not is_interrupt:
             await message.reply(
                 "申し訳ありません🙏\n"
                 "フォルダ生成が始まったため、このリクエストはキャンセルされてしまいました。\n"
                 "フォルダ生成が完了してから再度お試しください。"
             )
             return
+        comfy_port = self._gate.comfy_port
+        if comfy_port == 0:
+            # gate.set_comfy_port() が未実行 (runtime_root未指定のスタンドアロン相当の
+            # 呼び出し等) の場合は、従来どおり bot_state.json から直接フォールバックする
+            _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
         if comfy_port == 0:
             await message.reply("ComfyUI のポートが不明です。アプリを再起動してください。")
             return
@@ -470,13 +481,25 @@ class DiscordBotController:
                 # 通常モードは即座に表示 (他の画像と競合しないため早期表示で問題ない)
                 _emit_started()
 
-            gen_start = _time.monotonic()
-            # 割り込みの場合、実際に ComfyUI が生成を開始するまでプレビュー切替を遅らせる
-            # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
-            output_path = await self._generate_video(
-                image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
-                workflow=workflow,
+            # 実際の生成 (ComfyUIへのqueue_prompt) 直前でgateを取得する。取れなければ
+            # (待機中にBotが停止された等でキャンセル扱いになった場合) は既存の
+            # _CancelledError系フローに合流させる。
+            lease = await self._gate.wait_acquire(
+                "discord", cancel_check=self._cancel_requested.is_set,
             )
+            if lease is None:
+                raise _CancelledError()
+
+            gen_start = _time.monotonic()
+            try:
+                # 割り込みの場合、実際に ComfyUI が生成を開始するまでプレビュー切替を遅らせる
+                # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
+                output_path = await self._generate_video(
+                    image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
+                    workflow=workflow,
+                )
+            finally:
+                self._gate.release(lease)
             _emit_started()  # フォールバック: execution_start を観測できなかった場合も必ず発火
             elapsed = _time.monotonic() - gen_start
 

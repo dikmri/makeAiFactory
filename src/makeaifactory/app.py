@@ -19,9 +19,9 @@ from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENS
 from .i18n import tr, tr_elapsed
 from .core.app_controller import AppController
 from .core.batch_output import finalize_batch_item
-from .core.bot_state import read_bot_state, write_bot_state
 from .core.diagnostics import build_diagnostic_payload
 from .core.error_reporter import send_error_report
+from .core.generation_gate import GenerationGate
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
 from .core.paths import AppPaths, _exe_dir
@@ -144,7 +144,10 @@ def run_app() -> int:
         settings.agree_to_terms()
         settings.set_accepted_terms_version(CURRENT_TERMS_VERSION)
 
-    ctrl = AppController(paths, settings)
+    # プロセス内admission guard + bot_state単一書き手。生成の入口 (Desktop単発/
+    # バッチ/Discord/Remote Room/Local Bridge) すべてがこのgateを介して排他制御される。
+    gate = GenerationGate(paths.runtime_root)
+    ctrl = AppController(paths, settings, gate)
     window = MainWindow()
     window.set_paths(paths.logs_dir, paths.outputs_dir)
     # 修復コールバックの登録 (window.set_repair_callback(_trigger_repair)) は、
@@ -550,7 +553,7 @@ def run_app() -> int:
                 window.set_active_workflow("default")
         window.set_sage_attention_available(sage_attention_available)
         window.set_sage_attention_checked(sage_attention_available and settings.sage_attention_enabled)
-        write_bot_state(paths.runtime_root, "idle", ctrl.comfy_port)
+        gate.set_comfy_port(ctrl.comfy_port)
         if os.environ.get("MAF_UPDATE_APPLIED"):
             window.update_status(tr("✓ v{version} にアップデートされました").format(version=APP_VERSION))
         if settings.discord_bot_enabled and settings.discord_token:
@@ -567,13 +570,15 @@ def run_app() -> int:
 
     @Slot(Path, str, float, float, float)
     def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
-        write_bot_state(paths.runtime_root, "idle")
+        # bot_state.jsonの"idle"化は_run_jobのgate.release()で既に完了している。
+        # ここではgateが把握している現在状態を書き直すだけ(keep-alive相当)。
+        gate.refresh_bot_state()
         window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
         _play_complete_se()
 
     @Slot()
     def _on_job_cancelled() -> None:
-        write_bot_state(paths.runtime_root, "idle")
+        gate.refresh_bot_state()
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -593,7 +598,8 @@ def run_app() -> int:
         _discord["batch_running"] = False
         if _discord["ctrl"]:
             _discord["ctrl"].set_batch_mode(False)
-        write_bot_state(paths.runtime_root, "idle")
+        # bot_state.jsonの"idle"化は_run_batchのgate.end_batch()で既に完了している。
+        gate.refresh_bot_state()
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.hide_finish_current_btn()
@@ -618,7 +624,9 @@ def run_app() -> int:
 
     @Slot(str, str, str, bool)
     def _on_error(title: str, msg: str, detail: str, show_repair: bool) -> None:
-        write_bot_state(paths.runtime_root, "idle")
+        # setup/job/repairいずれのエラー経路でも、既に該当leaseは解放済みのはず。
+        # ここではgateが把握している現在状態で書き直すだけ。
+        gate.refresh_bot_state()
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -630,7 +638,7 @@ def run_app() -> int:
         logger.info("_start_discord_bot 開始 (既存ctrl=%s)", _discord["ctrl"] is not None)
         if _discord["ctrl"]:
             _discord["ctrl"].stop()
-        bot = DiscordBotController(settings, paths)
+        bot = DiscordBotController(settings, paths, gate=gate)
         _discord["ctrl"] = bot
         sig = bot.signals
         sig.job_started.connect(_on_discord_job_started,   Qt.ConnectionType.QueuedConnection)
@@ -647,8 +655,9 @@ def run_app() -> int:
 
     @Slot(str, str)
     def _on_discord_job_started(image_path: str, username: str) -> None:
+        # bot_state.jsonへの反映はDiscordBotController側のgate.wait_acquire()ミラーが
+        # 既に行っている。ここは_discord["generating"]等UIルーティング用フラグの更新のみ。
         _discord["generating"] = True
-        write_bot_state(paths.runtime_root, "single")
 
         if _discord["batch_running"]:
             window.set_current_image(Path(image_path))
@@ -686,14 +695,12 @@ def run_app() -> int:
     def _on_discord_job_done(output_path: str) -> None:
         _discord["generating"] = False
         if _discord["batch_running"]:
-            write_bot_state(paths.runtime_root, "batch")
             window.update_batch_progress(
                 tr("⚡ Discord 割り込み完了 — バッチ再開中..."),
                 _discord["batch_all_pct"], 100.0, -1.0, "",
             )
             logger.info("Discord 割り込みジョブ完了: %s", output_path)
             return
-        write_bot_state(paths.runtime_root, "idle")
         window.show_result(Path(output_path))
         _play_complete_se()
         logger.info("Discord ジョブ完了: %s", output_path)
@@ -702,9 +709,7 @@ def run_app() -> int:
     def _on_discord_job_cancelled() -> None:
         _discord["generating"] = False
         if _discord["batch_running"]:
-            write_bot_state(paths.runtime_root, "batch")
             return
-        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -714,10 +719,8 @@ def run_app() -> int:
     def _on_discord_job_error(msg: str) -> None:
         _discord["generating"] = False
         if _discord["batch_running"]:
-            write_bot_state(paths.runtime_root, "batch")
             logger.error("Discord 割り込みジョブエラー: %s", msg)
             return
-        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -793,7 +796,7 @@ def run_app() -> int:
                     ctrl.build_workflow_templates()
                 except Exception:
                     logger.warning("インターネット投入口: ワークフローテンプレート生成に失敗", exc_info=True)
-                room_ctrl = RemoteRoomController(settings, paths)
+                room_ctrl = RemoteRoomController(settings, paths, gate=gate, owner="remote")
                 _remote_room["ctrl"] = room_ctrl
                 sig = room_ctrl.signals
                 sig.status_changed.connect(dlg.update_status,          Qt.ConnectionType.QueuedConnection)
@@ -868,8 +871,9 @@ def run_app() -> int:
 
     @Slot(str, str)
     def _on_remote_job_started(job_id: str, image_path: str) -> None:
+        # bot_state.jsonへの反映はRemoteRoomController側のgate.wait_acquire()ミラーが
+        # 既に行っている。ここは_remote_room["generating"]等UIルーティング用フラグの更新のみ。
         _remote_room["generating"] = True
-        write_bot_state(paths.runtime_root, "single")
         window.enter_single_mode(Path(image_path))
         window.update_single_progress(tr("🌐 投入口 生成中: #{job_id}").format(job_id=job_id[:6]), 0.0, -1.0)
 
@@ -890,7 +894,6 @@ def run_app() -> int:
     @Slot(str, str)
     def _on_remote_job_done(job_id: str, output_path: str) -> None:
         _remote_room["generating"] = False
-        write_bot_state(paths.runtime_root, "idle")
         window.show_result(Path(output_path))
         _play_complete_se()
         logger.info("Remote Room ジョブ完了: %s → %s", job_id, output_path)
@@ -898,7 +901,6 @@ def run_app() -> int:
     @Slot(str, str)
     def _on_remote_job_error(job_id: str, msg: str) -> None:
         _remote_room["generating"] = False
-        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -909,8 +911,9 @@ def run_app() -> int:
 
     @Slot(str, str)
     def _on_bridge_job_started(job_id: str, image_path: str) -> None:
+        # bot_state.jsonへの反映はRemoteRoomController(owner="bridge")側の
+        # gate.wait_acquire()ミラーが既に行っている。ここはUIルーティング用フラグのみ更新。
         _local_bridge["generating"] = True
-        write_bot_state(paths.runtime_root, "single")
         window.enter_single_mode(Path(image_path))
         window.update_single_progress(
             tr("🖥 ブラウザ連携 生成中: #{job_id}").format(job_id=job_id[:6]), 0.0, -1.0)
@@ -924,7 +927,6 @@ def run_app() -> int:
     @Slot(str, str)
     def _on_bridge_job_done(job_id: str, output_path: str) -> None:
         _local_bridge["generating"] = False
-        write_bot_state(paths.runtime_root, "idle")
         auto_folder = settings.auto_save_folder
         if settings.auto_save_enabled and auto_folder:
             try:
@@ -941,7 +943,6 @@ def run_app() -> int:
     @Slot(str, str)
     def _on_bridge_job_error(job_id: str, msg: str) -> None:
         _local_bridge["generating"] = False
-        write_bot_state(paths.runtime_root, "idle")
         window.stop_elapsed_timer()
         window.hide_cancel_btn()
         window.show_drop_page()
@@ -1107,12 +1108,16 @@ def run_app() -> int:
         - 削除・再導入はGUIスレッドではなくworker (_Worker/QThreadPool) 上で行う。
         - 進捗/完了/失敗は、通常のセットアップ完了経路と同じ signals
           (setup_progress / setup_ready / error) に載せてUIへ届ける。
+        - 修復中はGenerationGateを"desktop"としてtry_acquireで確保したままにし、
+          修復完了/失敗のいずれでも必ずreleaseする。これにより、修復開始判定(read)
+          と実際の停止処理の間のTOCTOUが無くなるだけでなく、修復処理そのものが
+          進行中の間も他経路からの新規生成をブロックできる。
         """
-        from .runtime.repair_manager import RepairManager, can_start_repair
+        from .runtime.repair_manager import RepairManager
         from .runtime.runtime_state import RuntimeState
 
-        bot_state, _port = read_bot_state(paths.runtime_root)
-        if not can_start_repair(bot_state):
+        lease = gate.try_acquire("desktop")
+        if lease is None:
             window.show_error(
                 tr("修復できません"),
                 tr("生成中は修復できません。生成が完了してからお試しください。"),
@@ -1180,6 +1185,8 @@ def run_app() -> int:
             except Exception as e:
                 logger.exception("修復に失敗しました")
                 signals.error.emit(tr("修復失敗"), str(e), "", False)
+            finally:
+                gate.release(lease)
 
         pool = QThreadPool.globalInstance()
         pool.start(_Worker(_repair(), signals))
@@ -1189,6 +1196,20 @@ def run_app() -> int:
     async def _run_job(image_path: Path) -> None:
         def _cb(p: JobProgress):
             signals.job_progress.emit(p)
+
+        # まず即座に取得を試み、既に他経路 (Discord/Remote Room/バッチ等) が
+        # 生成中で取れなかった場合のみ「待っています」を通知してから待機する
+        # (取れる状況なら余計な表示を出さない)。
+        lease = gate.try_acquire("desktop")
+        if lease is None:
+            signals.job_progress.emit(JobProgress(
+                state=JobState.PENDING, message=tr("他の生成の完了を待っています..."),
+            ))
+            lease = await gate.wait_acquire("desktop", cancel_check=_single_cancel.is_set)
+            if lease is None:
+                signals.job_cancelled.emit()
+                return
+
         try:
             job_ctrl = ctrl.get_job_controller()
             output, bench = await job_ctrl.run_job(image_path, on_progress=_cb)
@@ -1213,115 +1234,134 @@ def run_app() -> int:
             else:
                 logger.exception("生成中に予期しないエラー")
                 signals.error.emit(tr("生成失敗"), str(e), "", False)
+        finally:
+            gate.release(lease)
 
     async def _run_batch(input_folder: Path, output_folder: Path) -> None:
-        images = sorted(
-            p for p in input_folder.iterdir()
-            if p.is_file() and p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
-        )
-        total = len(images)
-        if total == 0:
-            signals.error.emit(
-                tr("画像が見つかりません"),
-                tr("{folder} に対応画像がありません").format(folder=input_folder),
-                "", False,
+        # バッチ全体の開始をgateへ通知する (batch_active=True、bot_state="batch"にミラー)。
+        # 早期return (画像0枚) を含め、必ずfinallyでend_batch()するため関数全体を包む。
+        gate.begin_batch()
+        try:
+            images = sorted(
+                p for p in input_folder.iterdir()
+                if p.is_file() and p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
             )
-            return
-
-        end_dir = input_folder / "end"
-        end_dir.mkdir(exist_ok=True)
-        output_folder.mkdir(parents=True, exist_ok=True)
-
-        start = time.monotonic()
-        completed = 0
-        failed: list[str] = []
-        manifest_path = output_folder / "batch_manifest.json"
-
-        def _append_manifest(entry: dict) -> None:
-            # manifestへの記録はbest-effort。失敗してもバッチ処理自体は継続する。
-            # 原子的書き込みは後続PRで共通化予定のため、現時点では
-            # 「既存全体を読んで1件追記し、全体を書き戻す」素朴な実装でよい。
-            import json
-            try:
-                try:
-                    existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-                    if not isinstance(existing, list):
-                        existing = []
-                except (FileNotFoundError, json.JSONDecodeError):
-                    existing = []
-                existing.append(entry)
-                with manifest_path.open("w", encoding="utf-8") as f:
-                    json.dump(existing, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logger.debug("batch_manifest.json 書き込み失敗: %s", e)
-
-        for i, image_path in enumerate(images):
-            if _batch_cancel.is_set():
-                break
-
-            signals.batch_current_image.emit(image_path)
-
-            def _cb(p: JobProgress, idx: int = i, name: str = image_path.name) -> None:
-                img_pct = _job_overall_pct(p)
-                all_pct = (idx + img_pct / 100) / total * 100
-                signals.batch_progress.emit(
-                    tr("フォルダ生成 ({idx}/{total}): {name}").format(idx=idx + 1, total=total, name=name),
-                    all_pct,
-                    img_pct,
-                    _task_pct(p),
-                    p.message,
+            total = len(images)
+            if total == 0:
+                signals.error.emit(
+                    tr("画像が見つかりません"),
+                    tr("{folder} に対応画像がありません").format(folder=input_folder),
+                    "", False,
                 )
+                return
 
-            try:
-                job_ctrl = ctrl.get_job_controller()
-                output, _bench = await job_ctrl.run_job(image_path, on_progress=_cb)
-                final = finalize_batch_item(image_path, output, output_folder, end_dir)
-                completed += 1
-                _append_manifest({
-                    "input": image_path.name,
-                    "stem": image_path.stem,
-                    "state": "done",
-                    "output": final.name,
-                    "error": None,
-                    "timestamp": time.time(),
-                })
-            except Exception as e:
+            end_dir = input_folder / "end"
+            end_dir.mkdir(exist_ok=True)
+            output_folder.mkdir(parents=True, exist_ok=True)
+
+            start = time.monotonic()
+            completed = 0
+            failed: list[str] = []
+            manifest_path = output_folder / "batch_manifest.json"
+
+            def _append_manifest(entry: dict) -> None:
+                # manifestへの記録はbest-effort。失敗してもバッチ処理自体は継続する。
+                # 原子的書き込みは後続PRで共通化予定のため、現時点では
+                # 「既存全体を読んで1件追記し、全体を書き戻す」素朴な実装でよい。
+                import json
+                try:
+                    try:
+                        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+                        if not isinstance(existing, list):
+                            existing = []
+                    except (FileNotFoundError, json.JSONDecodeError):
+                        existing = []
+                    existing.append(entry)
+                    with manifest_path.open("w", encoding="utf-8") as f:
+                        json.dump(existing, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logger.debug("batch_manifest.json 書き込み失敗: %s", e)
+
+            for i, image_path in enumerate(images):
                 if _batch_cancel.is_set():
-                    logger.info("バッチ生成中断 (%s)", image_path.name)
-                else:
-                    failed.append(image_path.name)
-                    logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
+                    break
+
+                signals.batch_current_image.emit(image_path)
+
+                def _cb(p: JobProgress, idx: int = i, name: str = image_path.name) -> None:
+                    img_pct = _job_overall_pct(p)
+                    all_pct = (idx + img_pct / 100) / total * 100
+                    signals.batch_progress.emit(
+                        tr("フォルダ生成 ({idx}/{total}): {name}").format(idx=idx + 1, total=total, name=name),
+                        all_pct,
+                        img_pct,
+                        _task_pct(p),
+                        p.message,
+                    )
+
+                # バッチのアイテムごとにgateを取得する。アイテム間はgateが空くため、
+                # そのタイミングでDiscord割り込みジョブ("discord"owner)が取得できる
+                # (batch_active中はbatch/discordのみ取得可のadmissionポリシー)。
+                lease = await gate.wait_acquire("batch", cancel_check=_batch_cancel.is_set)
+                if lease is None:
+                    break  # 取得待ち中にキャンセルされた
+
+                try:
+                    job_ctrl = ctrl.get_job_controller()
+                    output, _bench = await job_ctrl.run_job(image_path, on_progress=_cb)
+                    final = finalize_batch_item(image_path, output, output_folder, end_dir)
+                    completed += 1
                     _append_manifest({
                         "input": image_path.name,
                         "stem": image_path.stem,
-                        "state": "failed",
-                        "output": None,
-                        "error": str(e),
+                        "state": "done",
+                        "output": final.name,
+                        "error": None,
                         "timestamp": time.time(),
                     })
+                except Exception as e:
+                    if _batch_cancel.is_set():
+                        logger.info("バッチ生成中断 (%s)", image_path.name)
+                    else:
+                        failed.append(image_path.name)
+                        logger.error("バッチ処理エラー (%s): %s", image_path.name, e)
+                        _append_manifest({
+                            "input": image_path.name,
+                            "stem": image_path.stem,
+                            "state": "failed",
+                            "output": None,
+                            "error": str(e),
+                            "timestamp": time.time(),
+                        })
+                finally:
+                    gate.release(lease)
 
-            # Discord 割り込み生成: 1件終了後、割り込みキューが空になるまで待機
-            disc_ctrl = _discord["ctrl"]
-            if settings.discord_bot_interrupt and disc_ctrl and disc_ctrl.interrupt_active.is_set():
-                logger.info("Discord 割り込み待機 (バッチ %d/%d 完了後)", i + 1, total)
-                all_pct_so_far = (i + 1) / total * 100
-                signals.batch_progress.emit(
-                    tr("フォルダ生成 ({idx}/{total}) — ⚡ Discord 割り込み生成中...").format(idx=i + 1, total=total),
-                    all_pct_so_far, 100.0, -1.0, tr("Discord からのリクエストを優先処理中"),
-                )
-                while disc_ctrl.interrupt_active.is_set():
-                    # 「次の動画で終了」はソフトキャンセルなので割り込み完了まで待つ。
-                    # ハードキャンセル（中断ボタン）のみ即時脱出する。
-                    if _batch_cancel.is_set() and not _batch_finish_after_current.is_set():
-                        break
-                    await asyncio.sleep(0.5)
-                logger.info("Discord 割り込み完了 → バッチ再開")
+                # Discord 割り込み生成: 1件終了後、割り込みキューが空になるまで待機
+                # (既存のハンドシェイクは変更しない。アイテム間でgateが空いているため
+                # Discord割り込みジョブは上記wait_acquireを介さず自身のwait_acquireで取得できる)
+                disc_ctrl = _discord["ctrl"]
+                if settings.discord_bot_interrupt and disc_ctrl and disc_ctrl.interrupt_active.is_set():
+                    logger.info("Discord 割り込み待機 (バッチ %d/%d 完了後)", i + 1, total)
+                    all_pct_so_far = (i + 1) / total * 100
+                    signals.batch_progress.emit(
+                        tr("フォルダ生成 ({idx}/{total}) — ⚡ Discord 割り込み生成中...").format(idx=i + 1, total=total),
+                        all_pct_so_far, 100.0, -1.0, tr("Discord からのリクエストを優先処理中"),
+                    )
+                    while disc_ctrl.interrupt_active.is_set():
+                        # 「次の動画で終了」はソフトキャンセルなので割り込み完了まで待つ。
+                        # ハードキャンセル（中断ボタン）のみ即時脱出する。
+                        if _batch_cancel.is_set() and not _batch_finish_after_current.is_set():
+                            break
+                        await asyncio.sleep(0.5)
+                    logger.info("Discord 割り込み完了 → バッチ再開")
 
-        if failed:
-            logger.warning("バッチ失敗 %d件: %s", len(failed), failed)
+            if failed:
+                logger.warning("バッチ失敗 %d件: %s", len(failed), failed)
 
-        elapsed = time.monotonic() - start
-        signals.batch_done.emit(completed, total, elapsed)
+            elapsed = time.monotonic() - start
+            signals.batch_done.emit(completed, total, elapsed)
+        finally:
+            gate.end_batch()
 
     async def _cancel_current_job() -> None:
         try:
@@ -1336,7 +1376,7 @@ def run_app() -> int:
 
     @Slot(Path)
     def _on_image_dropped(path: Path) -> None:
-        write_bot_state(paths.runtime_root, "single")
+        # bot_state.jsonへの反映は_run_job内のgate.wait_acquire()ミラーが行う。
         window.enter_single_mode(path)
         window.update_single_progress(tr("生成を準備しています..."), 0.0, -1.0)
 
@@ -1367,7 +1407,7 @@ def run_app() -> int:
         settings.set_batch_input_folder(str(input_folder))
         settings.set_batch_output_folder(str(output_folder))
 
-        write_bot_state(paths.runtime_root, "batch")
+        # bot_state.jsonへの反映は_run_batch冒頭のgate.begin_batch()が行う。
         _batch_cancel.clear()
         _batch_finish_after_current.clear()
         _discord["batch_running"] = True

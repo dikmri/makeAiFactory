@@ -25,6 +25,7 @@ from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stag
 from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
+from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..domain.errors import OutputNotFoundError
@@ -55,9 +56,21 @@ def _generate_pin() -> str:
 
 
 class RemoteRoomController:
-    def __init__(self, settings: SettingsStore, paths: AppPaths) -> None:
+    def __init__(
+        self,
+        settings: SettingsStore,
+        paths: AppPaths,
+        gate: GenerationGate | None = None,
+        owner: str = "remote",
+    ) -> None:
         self._settings = settings
         self._paths = paths
+        # 生成admissionゲート。app.py/AppController から共有インスタンスを受け取るのが
+        # 通常経路。未指定 (単体テスト等) の場合はbot_stateミラー無しの単独インスタンス。
+        self._gate = gate if gate is not None else GenerationGate(None)
+        # インターネット投入口 (owner="remote") とローカルブリッジ (owner="bridge") は
+        # 同じ RemoteRoomController 実装を使い回すため、gate上のowner名で区別する。
+        self._owner = owner
         self._signals = RemoteRoomSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -334,17 +347,34 @@ class RemoteRoomController:
         assert self._config is not None
 
         # フォルダバッチ生成中はリジェクト
-        state, comfy_port = read_bot_state(self._paths.runtime_root)
-        if state == "batch":
+        if self._gate.batch_active:
             job.status = "failed"
             job.completed_at = datetime.now()
             job.error_message = "現在フォルダ一括生成中のため受付できません。"
             self._emit_stats()
             return
+        comfy_port = self._gate.comfy_port
+        if comfy_port == 0:
+            # gate.set_comfy_port() が未実行 (単体テスト等) の場合は、従来どおり
+            # bot_state.json から直接フォールバックする
+            _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
         if comfy_port == 0:
             job.status = "failed"
             job.completed_at = datetime.now()
             job.error_message = "ComfyUI のポートが不明です。アプリを再起動してください。"
+            self._emit_stats()
+            return
+
+        # デキュー済みだが実際の生成開始前にgateを取得する。取得待ち中に
+        # キャンセルされた (ジョブ自体がcancelled化、あるいはコントローラ停止) 場合は
+        # 待たずに終了する。
+        lease = await self._gate.wait_acquire(
+            self._owner, cancel_check=lambda: job.status == "cancelled" or not self._running,
+        )
+        if lease is None:
+            job.status = "cancelled"
+            job.completed_at = datetime.now()
+            job.error_message = "生成待機中にキャンセルされました。"
             self._emit_stats()
             return
 
@@ -375,6 +405,8 @@ class RemoteRoomController:
             self._signals.job_error.emit(job.job_id, str(e))
             self._emit_stats()
             raise
+        finally:
+            self._gate.release(lease)
 
     def _on_job_progress(self, job: RemoteJob, pct: float, label: str) -> None:
         job.progress_pct = pct

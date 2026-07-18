@@ -8,6 +8,7 @@ from typing import Callable
 
 from ..comfy.server_controller import ComfyServerController
 from ..comfy.workflow_sanitizer import load_and_sanitize
+from ..core.generation_gate import GenerationGate
 from ..core.job_controller import JobController
 from ..core.log_manager import get_setup_logger, setup_logging
 from ..core.paths import AppPaths
@@ -49,9 +50,12 @@ JobProgressCallback = Callable[[JobProgress], None]
 
 
 class AppController:
-    def __init__(self, paths: AppPaths, settings: SettingsStore):
+    def __init__(self, paths: AppPaths, settings: SettingsStore, gate: GenerationGate | None = None):
         self._paths = paths
         self._settings = settings
+        # 生成admissionゲート。app.py から共有インスタンスを受け取るのが通常経路。
+        # 未指定 (テスト等) の場合はbot_stateミラー無しの単独インスタンスを持つ。
+        self._gate = gate if gate is not None else GenerationGate(None)
         self._state = RuntimeState(paths.runtime_root)
         self._server: ComfyServerController | None = None
         self._job_ctrl: JobController | None = None
@@ -352,7 +356,9 @@ class AppController:
         self.build_workflow_templates()
 
         if self._local_bridge is None:
-            self._local_bridge = RemoteRoomController(self._settings, self._paths)
+            self._local_bridge = RemoteRoomController(
+                self._settings, self._paths, gate=self._gate, owner="bridge",
+            )
         if not self._local_bridge.is_running:
             cfg = RemoteRoomConfig(
                 enabled=True,
