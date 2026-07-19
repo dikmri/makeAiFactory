@@ -53,6 +53,11 @@ class TunnelManager:
         cloudflared を起動して trycloudflare.com URL を返す。
         exe_path を指定するとそのバイナリを使用する (cloudflared_installer から渡される)。
         TUNNEL_STARTUP_TIMEOUT 秒以内に URL が取得できない場合は RuntimeError を送出する。
+
+        RLC-01 (2): URL取得(TimeoutError/プロセス異常終了によるRuntimeError等)に
+        失敗した場合は、起動済みの cloudflared プロセスを残さないよう自ら停止
+        (self-clean) してから元の例外を再送出する。呼び出し側が stop() を
+        呼び忘れてもプロセスが残存しないようにするための保険。
         """
         cloudflared = exe_path or find_cloudflared()
         if cloudflared is None:
@@ -77,7 +82,12 @@ class TunnelManager:
             creationflags=0x08000000 if sys.platform == "win32" else 0,  # CREATE_NO_WINDOW
         )
 
-        url = await asyncio.wait_for(self._read_url(), timeout=TUNNEL_STARTUP_TIMEOUT)
+        try:
+            url = await asyncio.wait_for(self._read_url(), timeout=TUNNEL_STARTUP_TIMEOUT)
+        except Exception:
+            logger.warning("Tunnel URL 取得に失敗したため cloudflared を停止します", exc_info=True)
+            await self.stop()
+            raise
         self._public_url = url
         logger.info("Tunnel URL 取得: %s", url)
 

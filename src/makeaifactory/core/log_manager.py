@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-from datetime import datetime
 from pathlib import Path
 
 
@@ -31,15 +30,11 @@ def setup_logging(logs_dir: Path, level: int = logging.DEBUG) -> None:
     app_handler.setLevel(logging.DEBUG)
     root.addHandler(app_handler)
 
-    # 日付付きログ (makeaifactory_YYYYMMDD.log, 起動日ごとに1ファイル)
-    date_str = datetime.now().strftime("%Y%m%d")
-    date_handler = logging.FileHandler(
-        logs_dir / f"makeaifactory_{date_str}.log",
-        encoding="utf-8",
-    )
-    date_handler.setFormatter(fmt)
-    date_handler.setLevel(logging.DEBUG)
-    root.addHandler(date_handler)
+    # RET-01: 従来ここで日付付きログ (makeaifactory_YYYYMMDD.log) 用の
+    # FileHandler を起動日ごとに1つ追加していたが、世代管理(ローテーション)が
+    # 無く起動日数だけ無限に増え続けていたため廃止した。ログはapp.log
+    # (RotatingFileHandlerで10MB×5世代管理済み) に一本化する。既存の残骸
+    # ファイルは core/retention.py の cleanup_old_logs で掃除する。
 
     console = logging.StreamHandler()
     console.setFormatter(fmt)

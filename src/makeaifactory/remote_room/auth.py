@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 _MAX_PIN_FAILURES = 5
 _PIN_LOCK_SECONDS = 300
 
+# RLC-01 (4): セッション上限。cleanup_expired はTTL経過分のみを掃除するため、
+# 短時間に大量アクセスが発生した場合の無制限なメモリ/セッション増殖を防ぐ保険
+# として、上限到達時は最古のセッションを追い出してから新規発行する。
+_MAX_SESSIONS = 30
+
 
 @dataclass
 class Session:
@@ -65,6 +70,16 @@ class AuthManager:
         )
 
     def create_session(self, ip_hash: str) -> Session:
+        """新しいセッションを発行する。
+
+        RLC-01 (4): _MAX_SESSIONS に達している場合は、最古(created_at最小)の
+        セッションを削除してから発行する (evict-oldest)。cleanup_expired は
+        PIN認証成功時にしか呼ばれないため、それだけに頼るとTTLの長い設定や
+        短時間の大量アクセスでセッションが無制限に増え続けてしまう。
+        """
+        if len(self._sessions) >= _MAX_SESSIONS:
+            oldest_sid = min(self._sessions.values(), key=lambda s: s.created_at).session_id
+            del self._sessions[oldest_sid]
         session_id = secrets.token_urlsafe(32)
         csrf_token = secrets.token_hex(32)
         session = Session(session_id=session_id, ip_hash=ip_hash, csrf_token=csrf_token)

@@ -4,6 +4,7 @@ import json
 import logging
 from pathlib import Path
 
+from . import dpapi
 from .atomic_json import read_json_or_default, write_json_atomic
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,8 @@ _DEFAULTS = {
     "se_on_batch_complete": True,   # フォルダ(バッチ)生成完了時にも通知音を鳴らすか
     "always_on_top": False,         # ウィンドウを常に最前面に表示するか
     "discord_bot_enabled": False,
-    "discord_token": "",
+    "discord_token": "",           # 旧・平文保存 (後方互換のため残置。DAT-01以降は空にしDPAPI暗号化側へ移行する)
+    "discord_token_enc": "",       # DAT-01: DPAPI(CryptProtectData)暗号化 + Base64 の格納先
     "discord_channel_ids": [],      # list[int]
     "discord_bot_interrupt": False, # フォルダ生成中に Discord リクエストを割り込ませる
     "remote_room": {
@@ -39,6 +41,7 @@ _DEFAULTS = {
         "max_queue_size": 3,
         "per_session_cooldown_seconds": 600,
         "output_retention_hours": 24,
+        "qr_include_pin": True,  # RLC-01 (5): QRコードにPINを埋め込むか (既定は現状維持でTrue)
     },
     "local_bridge": {                # ブラウザ連携(Tampermonkey)
         "enabled": False,            # ローカルブリッジサーバーを起動するか
@@ -217,10 +220,67 @@ class SettingsStore:
 
     @property
     def discord_token(self) -> str:
-        return str(self.get("discord_token") or "")
+        """Discord Bot トークンを返す。
+
+        DAT-01: settings.json 平文保存の監査対応として、DPAPI(CryptProtectData)
+        で暗号化した discord_token_enc を正とする。旧バージョンが平文で
+        保存した discord_token が残っている場合は、読み出し時に一度だけ
+        暗号化して discord_token_enc へ移行する (移行できなくても挙動を
+        壊さないよう、平文の値はそのまま返す)。
+        """
+        enc = str(self._data.get("discord_token_enc") or "")
+        if enc:
+            try:
+                return dpapi.decrypt_from_b64(enc)
+            except Exception as e:
+                # 別Windowsユーザー/別PCへの環境移行、またはblob破損。
+                # 復号できない=トークンは失われているため、UI上は未設定として
+                # 扱い、ユーザーに再入力を促す (例外は上げずに空文字を返す)。
+                logger.warning("discord_token の復号に失敗しました。再設定が必要です: %s", e)
+                return ""
+
+        legacy = str(self._data.get("discord_token") or "")
+        if legacy:
+            try:
+                encrypted = dpapi.encrypt_to_b64(legacy)
+            except Exception as e:
+                # 暗号化自体に失敗した場合は移行せず、従来どおり平文のまま
+                # 返す (挙動を壊さないことを優先する)。
+                logger.warning("discord_token の暗号化移行に失敗しました (平文のまま使用): %s", e)
+                return legacy
+            self._data["discord_token_enc"] = encrypted
+            self._data["discord_token"] = ""
+            self._save()
+            logger.info("discord_token を平文から暗号化(DPAPI)形式へ移行しました")
+            return legacy
+
+        return ""
 
     def set_discord_token(self, token: str) -> None:
-        self.set("discord_token", token)
+        """Discord Bot トークンを保存する。
+
+        空文字の場合は暗号化/平文いずれも消去する (未設定状態にする)。
+        暗号化に失敗した場合は warning ログを出したうえで、従来どおり
+        平文で保存する (フォールバック。保存自体が失われることは避ける)。
+        """
+        if not token:
+            self._data["discord_token_enc"] = ""
+            self._data["discord_token"] = ""
+            self._save()
+            return
+
+        try:
+            encrypted = dpapi.encrypt_to_b64(token)
+        except Exception as e:
+            logger.warning("discord_token の暗号化に失敗しました。平文で保存します: %s", e)
+            self._data["discord_token_enc"] = ""
+            self._data["discord_token"] = token
+            self._save()
+            return
+
+        self._data["discord_token_enc"] = encrypted
+        self._data["discord_token"] = ""
+        self._save()
 
     @property
     def discord_channel_ids(self) -> list[int]:

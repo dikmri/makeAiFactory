@@ -344,5 +344,9 @@
   "フェラ向けLoRA・プロンプト構成": "LoRA and prompt setup for fellatio",
   "中出し": "Creampie",
   "中出し向けLoRA・プロンプト構成": "LoRA and prompt setup for creampie",
-  "他の生成の完了を待っています...": "Waiting for another generation to finish..."
+  "他の生成の完了を待っています...": "Waiting for another generation to finish...",
+  "QRコードにPINを含める(読み取るだけで入室可)": "Include PIN in QR code (scanning alone allows entry)",
+  "QRコード:": "QR code:",
+  "📱 スキャンしてPINを入力": "📱 Scan, then enter the PIN",
+  "稼働中": "Running"
 }

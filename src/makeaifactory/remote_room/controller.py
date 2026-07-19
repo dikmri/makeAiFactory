@@ -7,7 +7,6 @@ Discord Bot Controller と同様の設計:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
 import secrets
@@ -21,6 +20,7 @@ from PySide6.QtCore import QObject, Signal
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..constants import COMFY_HOST, MODEL_PRESETS
+from ..core.atomic_json import write_json_atomic
 from ..core.bot_state import read_bot_state
 from ..core.generation_executor import GenerationExecutor, GenerationRequest, load_template_for_workflow
 from ..core.generation_gate import GenerationGate
@@ -31,7 +31,7 @@ from ..i18n import tr
 from .auth import AuthManager
 from .rate_limiter import RateLimiter
 from .room_config import RemoteRoomConfig
-from .room_server import RemoteJob, RoomServer, find_free_port
+from .room_server import RemoteJob, RoomServer, cookie_max_age, find_free_port
 from .tunnel_manager import TunnelManager
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,15 @@ class RemoteRoomSignals(QObject):
 def _generate_pin() -> str:
     # 総当たり耐性のため暗号学的乱数で生成する
     return f"{secrets.randbelow(1000000):06d}"
+
+
+def ttl_watcher_needed(room_ttl_minutes: int) -> bool:
+    """TTL監視タスクを起動する必要があるかを判定する純関数。
+
+    RLC-01 (1): room_ttl_minutes <= 0 は「無期限」を意味し、TTL監視タスク
+    自体を作らない。常駐させたいローカルブリッジ(owner="bridge")向け。
+    """
+    return room_ttl_minutes > 0
 
 
 class RemoteRoomController:
@@ -81,6 +90,7 @@ class RemoteRoomController:
         self._stop_event: asyncio.Event | None = None
         self._config: RemoteRoomConfig | None = None
         self._pin: str = ""
+        self._public_url: str | None = None  # RLC-01 (6): ダイアログ再同期用に現在の公開URLを保持
         self._ip_salt = secrets.token_hex(16)
         # サーバーとコントローラで共有するジョブ辞書とキュー（同一asyncioループ内）
         self._jobs: dict[str, RemoteJob] = {}
@@ -99,11 +109,21 @@ class RemoteRoomController:
     def pin(self) -> str:
         return self._pin
 
+    @property
+    def public_url(self) -> str | None:
+        """現在公開中のURL (トンネル未確立/ローカルブリッジ等では None)。
+
+        RLC-01 (6): 稼働中にダイアログを閉じて再度開いた際、新しいダイアログへ
+        現在の状態を反映するために公開する。
+        """
+        return self._public_url
+
     def start(self, config: RemoteRoomConfig) -> None:
         if self.is_running:
             return
         self._config = config
         self._pin = _generate_pin() if config.require_pin else ""
+        self._public_url = None
         self._jobs.clear()
         self._accepting[0] = True
         self._running = True
@@ -209,10 +229,13 @@ class RemoteRoomController:
         config._job_base_dir = str(job_base_dir)  # type: ignore[attr-defined]
 
         # 認証マネージャとレートリミッタ
+        # RLC-01 (1): room_ttl_minutes<=0(無期限ルーム)でも AuthManager の
+        # セッションTTLを0にはしない。0のままだと cleanup_expired が全セッションを
+        # 即座に期限切れ扱いしてしまう (Cookie の max_age と同じ考え方で24時間を使う)。
         auth = AuthManager(
             pin=self._pin,
             require_pin=config.require_pin,
-            ttl_seconds=config.room_ttl_minutes * 60,
+            ttl_seconds=cookie_max_age(config.room_ttl_minutes),
         )
         limiter = RateLimiter(cooldown_seconds=config.per_session_cooldown_seconds)
 
@@ -286,6 +309,7 @@ class RemoteRoomController:
             public_url: str | None = None
             try:
                 public_url = await tunnel.start(port, exe_path=cloudflared_exe)
+                self._public_url = public_url
                 self._signals.public_url_ready.emit(public_url, self._pin)
                 self._signals.status_changed.emit("running", tr("公開中: {public_url}").format(public_url=public_url))
                 logger.info("投入口 公開: %s (PIN: %s)", public_url, "あり" if self._pin else "なし")
@@ -296,29 +320,41 @@ class RemoteRoomController:
                 )
                 self._signals.status_changed.emit("error", tr("Tunnel 起動タイムアウト"))
                 self._signals.error.emit(err)
+                # RLC-01 (2): tunnel_manager.start() 自体が失敗時に自己クリーンアップ
+                # するが、万一プロセスが残っていた場合の防御的な後始末 (stop()は冪等)。
+                await tunnel.stop()
                 await server.stop()
                 return
             except Exception as e:
                 self._signals.status_changed.emit("error", tr("Tunnel エラー: {e}").format(e=e))
                 self._signals.error.emit(str(e))
+                await tunnel.stop()
                 await server.stop()
                 return
 
         # ジョブワーカー + TTL 監視
         worker_task = asyncio.create_task(self._job_worker())
-        ttl_task = asyncio.create_task(self._ttl_watcher(config.room_ttl_minutes))
+        # RLC-01 (1): room_ttl_minutes <= 0 は「無期限」。常駐させたいローカル
+        # ブリッジ(owner="bridge")が既定TTL(180分)で突然停止しないよう、
+        # 無期限指定時はTTL監視タスク自体を作らない。
+        ttl_task = (
+            asyncio.create_task(self._ttl_watcher(config.room_ttl_minutes))
+            if ttl_watcher_needed(config.room_ttl_minutes) else None
+        )
 
         # 停止シグナル待機
         await self._stop_event.wait()
 
         logger.info("RemoteRoom 停止シーケンス開始")
         worker_task.cancel()
-        ttl_task.cancel()
+        if ttl_task is not None:
+            ttl_task.cancel()
         self._accepting[0] = False
 
         if tunnel is not None:
             await tunnel.stop()
         await server.stop()
+        self._public_url = None
 
         # 出力ファイルの保持期間を考慮 (入力画像のみ即時削除)
         self._cleanup_inputs()
@@ -353,65 +389,72 @@ class RemoteRoomController:
     async def _process_job(self, job: RemoteJob) -> None:
         assert self._config is not None
 
-        # フォルダバッチ生成中はリジェクト
-        if self._gate.batch_active:
-            job.status = "failed"
-            job.completed_at = datetime.now()
-            job.error_message = "現在フォルダ一括生成中のため受付できません。"
-            self._emit_stats()
-            return
-        comfy_port = self._gate.comfy_port
-        if comfy_port == 0:
-            # gate.set_comfy_port() が未実行 (単体テスト等) の場合は、従来どおり
-            # bot_state.json から直接フォールバックする
-            _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
-        if comfy_port == 0:
-            job.status = "failed"
-            job.completed_at = datetime.now()
-            job.error_message = "ComfyUI のポートが不明です。アプリを再起動してください。"
-            self._emit_stats()
-            return
-
-        # SCH-01 PR4: gate取得(wait_acquire)〜release は _generate_video 内の
-        # executor.submit() へ集約した (以前はここで個別にwait_acquire/releaseして
-        # いた)。取得待ち中・生成中いずれのキャンセルもJobCancelledErrorとして
-        # 届くため、下のexcept節で統一的に「cancelled」状態として扱う。
-        job.status = "running"
-        job.progress_label = "生成準備中"
-        self._signals.job_started.emit(job.job_id, job.image_path)
-        self._emit_stats()
-
         try:
-            output_path = await self._generate_video(
-                job=job,
-                comfy_port=comfy_port,
-                on_progress=lambda pct, label: self._on_job_progress(job, pct, label),
-            )
-            job.status = "completed"
-            job.output_path = str(output_path)
-            job.video_url = f"/api/jobs/{job.job_id}/video"
-            job.completed_at = datetime.now()
-            job.progress_pct = 100.0
-            job.progress_label = "完了"
-            self._signals.job_done.emit(job.job_id, str(output_path))
+            # フォルダバッチ生成中はリジェクト
+            if self._gate.batch_active:
+                job.status = "failed"
+                job.completed_at = datetime.now()
+                job.error_message = "現在フォルダ一括生成中のため受付できません。"
+                self._emit_stats()
+                return
+            comfy_port = self._gate.comfy_port
+            if comfy_port == 0:
+                # gate.set_comfy_port() が未実行 (単体テスト等) の場合は、従来どおり
+                # bot_state.json から直接フォールバックする
+                _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
+            if comfy_port == 0:
+                job.status = "failed"
+                job.completed_at = datetime.now()
+                job.error_message = "ComfyUI のポートが不明です。アプリを再起動してください。"
+                self._emit_stats()
+                return
+
+            # SCH-01 PR4: gate取得(wait_acquire)〜release は _generate_video 内の
+            # executor.submit() へ集約した (以前はここで個別にwait_acquire/releaseして
+            # いた)。取得待ち中・生成中いずれのキャンセルもJobCancelledErrorとして
+            # 届くため、下のexcept節で統一的に「cancelled」状態として扱う。
+            job.status = "running"
+            job.progress_label = "生成準備中"
+            self._signals.job_started.emit(job.job_id, job.image_path)
             self._emit_stats()
-            logger.info("RemoteRoom ジョブ完了: %s → %s", job.job_id, output_path)
-        except JobCancelledError:
-            # gate取得待ち中・生成中いずれのキャンセルもここに合流する。
-            # _job_worker側の汎用except Exceptionでfailed扱いに上書きされない
-            # よう、ここで完結させ再送出しない。
-            job.status = "cancelled"
-            job.completed_at = datetime.now()
-            job.error_message = "生成がキャンセルされました。"
-            self._emit_stats()
-            logger.info("RemoteRoom ジョブキャンセル: %s", job.job_id)
-        except Exception as e:
-            job.status = "failed"
-            job.completed_at = datetime.now()
-            job.error_message = str(e)
-            self._signals.job_error.emit(job.job_id, str(e))
-            self._emit_stats()
-            raise
+
+            try:
+                output_path = await self._generate_video(
+                    job=job,
+                    comfy_port=comfy_port,
+                    on_progress=lambda pct, label: self._on_job_progress(job, pct, label),
+                )
+                job.status = "completed"
+                job.output_path = str(output_path)
+                job.video_url = f"/api/jobs/{job.job_id}/video"
+                job.completed_at = datetime.now()
+                job.progress_pct = 100.0
+                job.progress_label = "完了"
+                self._signals.job_done.emit(job.job_id, str(output_path))
+                self._emit_stats()
+                logger.info("RemoteRoom ジョブ完了: %s → %s", job.job_id, output_path)
+            except JobCancelledError:
+                # gate取得待ち中・生成中いずれのキャンセルもここに合流する。
+                # _job_worker側の汎用except Exceptionでfailed扱いに上書きされない
+                # よう、ここで完結させ再送出しない。
+                job.status = "cancelled"
+                job.completed_at = datetime.now()
+                job.error_message = "生成がキャンセルされました。"
+                self._emit_stats()
+                logger.info("RemoteRoom ジョブキャンセル: %s", job.job_id)
+            except Exception as e:
+                job.status = "failed"
+                job.completed_at = datetime.now()
+                job.error_message = str(e)
+                self._signals.job_error.emit(job.job_id, str(e))
+                self._emit_stats()
+                raise
+        finally:
+            # RET-01: 完了・失敗・キャンセル・早期リジェクトいずれの経路を通っても、
+            # 入力画像(input.png)とComfyUIアップロード用コピー(remote_<id>.png)は
+            # ここで都度削除する。output.mp4/job.jsonは保持期間(cleanup_remote_jobs)
+            # まで残す (ブラウザが /api/jobs/<id>/video で output.mp4 を取得するため)。
+            self._cleanup_job_inputs(job)
 
     def _on_job_progress(self, job: RemoteJob, pct: float, label: str) -> None:
         job.progress_pct = pct
@@ -487,13 +530,21 @@ class RemoteRoomController:
         )
 
         final_output = result.output_path
-        with (job_dir / "job.json").open("w", encoding="utf-8") as f:
-            json.dump({
+        # DAT-01: job.json はジョブごとに1つの専用ディレクトリへ1回だけ書く
+        # ("per-job"ファイル) ため、書き込みのたびに ".bak" が増えて
+        # ジョブ数だけディスクを消費することを避けるため make_backup=False。
+        write_json_atomic(
+            job_dir / "job.json",
+            {
                 "job_id": job.job_id,
                 "status": "completed",
                 "created_at": job.created_at.isoformat(),
                 "completed_at": datetime.now().isoformat(),
-            }, f, ensure_ascii=False, indent=2)
+            },
+            ensure_ascii=False,
+            indent=2,
+            make_backup=False,
+        )
 
         on_progress(100.0, tr("完了"))
         return final_output
@@ -510,8 +561,30 @@ class RemoteRoomController:
 
     # ── クリーンアップ ────────────────────────────────────────────────────────
 
+    def _cleanup_job_inputs(self, job: "RemoteJob") -> None:
+        """RET-01: 1ジョブ分の入力画像(input.png)とComfyUIアップロード用コピー
+        (remote_<job_id>.png)を削除する。`_process_job` の完了/失敗/キャンセル/
+        早期リジェクトいずれの経路からも finally 経由で呼ばれる (都度削除)。
+        output.mp4/job.json は保持期間 (cleanup_remote_jobs) まで残すため
+        ここでは触らない。失敗してもジョブ処理自体には影響させない (ログのみ)。
+        """
+        if not job.image_path:
+            return
+        try:
+            input_path = Path(job.image_path)
+            input_path.unlink(missing_ok=True)
+            upload_copy = input_path.parent / f"remote_{job.job_id}.png"
+            upload_copy.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("RemoteRoom: ジョブ入力の削除に失敗しました: %s", job.job_id, exc_info=True)
+
     def _cleanup_inputs(self) -> None:
-        """入力画像を即時削除する。出力動画は保持期間まで残す。"""
+        """停止時: 未処理分も含め残っている入力画像を即時削除する。出力動画は保持期間まで残す。
+
+        通常は `_process_job` の finally (`_cleanup_job_inputs`) で都度削除
+        されるが、キュー投入されたまま処理されなかったジョブの入力が
+        残る可能性があるため、停止時にまとめて掃除する保険。
+        """
         for job in self._jobs.values():
             if job.image_path:
                 try:

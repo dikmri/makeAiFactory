@@ -4,6 +4,8 @@ import json
 import logging
 from pathlib import Path
 
+from .atomic_json import write_json_atomic
+
 logger = logging.getLogger(__name__)
 
 _CONFIG_FILENAME = "makeAiFactory_install.json"
@@ -34,8 +36,10 @@ def save_runtime_config(exe_dir: Path, runtime_root: Path) -> None:
     path = get_config_path(exe_dir)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            json.dump({"runtime_root": str(runtime_root)}, f, indent=2)
+        # DAT-01: 書き込みをwrite_json_atomicへ置換 (途中終了で壊れたJSONが
+        # 残ることを防ぐ)。exe横の小さな単一設定ファイルのため".bak"の増加は
+        # 問題にならず、既定 (make_backup=True) のままでよい。
+        write_json_atomic(path, {"runtime_root": str(runtime_root)}, indent=2)
         logger.info("install config 保存: %s", runtime_root)
     except Exception as e:
         logger.warning("install config 保存失敗: %s", e)

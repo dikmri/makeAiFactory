@@ -27,6 +27,7 @@ from makeaifactory.constants import (
     UNET_HIGH_NODE_ID,
     UNET_LOW_NODE_ID,
 )
+from makeaifactory.core import generation_executor as ge_module
 from makeaifactory.core.generation_executor import GenerationExecutor, GenerationRequest
 from makeaifactory.domain.errors import JobCancelledError, OutputNotFoundError
 from makeaifactory.domain.progress import ComfyProgressEvent
@@ -105,8 +106,14 @@ class _FakeComfyClient:
         return self.histories[idx]
 
 
-def _make_paths(comfyui_output_dir: Path) -> SimpleNamespace:
-    return SimpleNamespace(comfyui_output_dir=comfyui_output_dir)
+def _make_paths(comfyui_output_dir: Path, comfyui_input_dir: Path | None = None) -> SimpleNamespace:
+    # RET-01: comfyui_input_dir はアップロード残渣削除のテスト用に追加した。
+    # 未指定の場合は output_dir の兄弟ディレクトリを既定にする
+    # (指定しないテストではAttributeErrorになり、生成executor側のtry/exceptで
+    # 握られてログのみになる。実際に削除挙動を検証したいテストでのみ明示的に渡す)。
+    if comfyui_input_dir is None:
+        comfyui_input_dir = comfyui_output_dir.parent / "comfyui_input"
+    return SimpleNamespace(comfyui_output_dir=comfyui_output_dir, comfyui_input_dir=comfyui_input_dir)
 
 
 def _history_with_gifs(prompt_id: str, subfolder: str, filename: str) -> dict:
@@ -441,3 +448,123 @@ async def test_ready_timeout_sec_none_uses_client_default(template, tmp_path):
     # req.ready_timeout_sec未指定の場合はwait_until_ready()を引数無しで呼ぶため、
     # フェイク側のデフォルト値(120)がそのまま観測される
     assert client.wait_until_ready_timeout == 120
+
+
+# ── RET-01: ComfyUI残渣の削除 ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_original_mp4_deleted_after_copy(template, tmp_path):
+    """job_dirへのコピー成功後は、comfyui_output_dir配下の元mp4は削除される
+    (削除しないと際限なく累積するため)。空になった出力subfolderも削除される。"""
+    req, job_dir, _ = _make_request(template, tmp_path, job_id="job_del")
+    output_dir = tmp_path / "comfyui_output"
+    subfolder = "makeAiFactory/job_del"
+    filename = "out.mp4"
+    subfolder_dir = output_dir / subfolder
+    subfolder_dir.mkdir(parents=True)
+    mp4_path = subfolder_dir / filename
+    mp4_path.write_bytes(b"fake mp4 bytes")
+
+    prompt_id = "prompt_del"
+    history = _history_with_gifs(prompt_id, subfolder, filename)
+    client = _FakeComfyClient(histories=[history], prompt_id=prompt_id)
+
+    executor = GenerationExecutor(_make_paths(output_dir))
+    result = await executor.run(req, client)
+
+    # コピー先(job_dir側)は存在するが、元ファイルは削除されている
+    assert result.output_path.exists()
+    assert not mp4_path.exists()
+    # 空になった出力subfolderも削除されている
+    assert not subfolder_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_original_mp4_kept_when_copy_size_mismatch(template, tmp_path, monkeypatch):
+    """コピー後のサイズが元ファイルと一致しない場合、元ファイルは削除されない。"""
+    req, job_dir, _ = _make_request(template, tmp_path, job_id="job_mismatch")
+    output_dir = tmp_path / "comfyui_output"
+    subfolder = "makeAiFactory/job_mismatch"
+    filename = "out.mp4"
+    subfolder_dir = output_dir / subfolder
+    subfolder_dir.mkdir(parents=True)
+    mp4_path = subfolder_dir / filename
+    mp4_path.write_bytes(b"fake mp4 bytes - full content")
+
+    prompt_id = "prompt_mismatch"
+    history = _history_with_gifs(prompt_id, subfolder, filename)
+    client = _FakeComfyClient(histories=[history], prompt_id=prompt_id)
+
+    # output.mp4へのコピーだけ意図的に不完全にする(サイズ不一致を発生させる)。
+    # 入力画像のjob_dirへのコピー(手順2)はそのまま実物のshutil.copy2を通す。
+    real_copy2 = ge_module.shutil.copy2
+
+    def _fake_copy2(src, dst, *args, **kwargs):
+        if Path(dst).name == "output.mp4":
+            Path(dst).write_bytes(Path(src).read_bytes()[:-1])  # 1バイト欠けたコピー
+            return dst
+        return real_copy2(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(ge_module.shutil, "copy2", _fake_copy2)
+
+    executor = GenerationExecutor(_make_paths(output_dir))
+    result = await executor.run(req, client)
+
+    # コピー先は(不完全ながら)作られているが、サイズ不一致のため元ファイルは残る
+    assert result.output_path.exists()
+    assert mp4_path.exists()
+    assert mp4_path.stat().st_size != result.output_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_comfyui_input_residue_deleted(template, tmp_path):
+    """ComfyUI/input へアップロードされた画像の残渣(uploaded_name)も削除される。"""
+    upload_basename = "makeaifactory_job_input_del.png"
+    req, job_dir, _ = _make_request(
+        template, tmp_path, job_id="job_input_del", upload_basename=upload_basename,
+    )
+    output_dir = tmp_path / "comfyui_output"
+    input_dir = tmp_path / "comfyui_input"
+    input_dir.mkdir(parents=True)
+    subfolder = "makeAiFactory/job_input_del"
+    filename = "out.mp4"
+    (output_dir / subfolder).mkdir(parents=True)
+    (output_dir / subfolder / filename).write_bytes(b"x")
+
+    prompt_id = "prompt_input_del"
+    history = _history_with_gifs(prompt_id, subfolder, filename)
+    client = _FakeComfyClient(histories=[history], prompt_id=prompt_id)
+
+    # _FakeComfyClient.upload_image は f"uploaded_{path.name}" を返す
+    # (path.name は req.upload_basename)。実際にComfyUI側へ保存されたのと
+    # 同じファイル名で、削除対象となる残渣を事前に置いておく。
+    uploaded_name = f"uploaded_{upload_basename}"
+    (input_dir / uploaded_name).write_bytes(b"uploaded copy on comfyui side")
+
+    executor = GenerationExecutor(_make_paths(output_dir, comfyui_input_dir=input_dir))
+    result = await executor.run(req, client)
+
+    assert result.uploaded_image_name == uploaded_name
+    assert not (input_dir / uploaded_name).exists()
+
+
+@pytest.mark.asyncio
+async def test_comfyui_input_residue_missing_attr_does_not_break_run(template, tmp_path):
+    """comfyui_input_dir 属性を持たないpaths (フェイク) でも例外を握って生成は成功扱いになる。"""
+    req, job_dir, _ = _make_request(template, tmp_path, job_id="job_no_attr")
+    output_dir = tmp_path / "comfyui_output"
+    subfolder = "makeAiFactory/job_no_attr"
+    filename = "out.mp4"
+    (output_dir / subfolder).mkdir(parents=True)
+    (output_dir / subfolder / filename).write_bytes(b"x")
+
+    prompt_id = "prompt_no_attr"
+    history = _history_with_gifs(prompt_id, subfolder, filename)
+    client = _FakeComfyClient(histories=[history], prompt_id=prompt_id)
+
+    # comfyui_input_dir を持たないSimpleNamespace (意図的にAttributeErrorを起こす)
+    paths = SimpleNamespace(comfyui_output_dir=output_dir)
+    executor = GenerationExecutor(paths)
+    result = await executor.run(req, client)
+
+    assert result.output_path.exists()

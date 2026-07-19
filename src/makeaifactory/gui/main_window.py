@@ -556,7 +556,11 @@ class MainWindow(QMainWindow):
         img: QImage = QApplication.clipboard().image()
         if img.isNull():
             return
-        tmp = Path(tempfile.mktemp(suffix=".png", prefix="maf_clip_"))
+        # RET-01: tempfile.mktemp はパス生成のみでファイルを作らないため、生成〜
+        # img.save までの間に他プロセスが同名ファイルを作るTOCTOUの可能性がある。
+        # NamedTemporaryFile(delete=False) でその場でファイルを確保してから使う。
+        with tempfile.NamedTemporaryFile(prefix="maf_clip_", suffix=".png", delete=False) as tf:
+            tmp = Path(tf.name)
         if not img.save(str(tmp), "PNG"):
             logger.warning("クリップボード画像の保存に失敗しました")
             return

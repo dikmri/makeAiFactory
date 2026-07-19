@@ -75,6 +75,26 @@ class RemoteJob:
         }
 
 
+def cookie_secure(tunnel_enabled: bool) -> bool:
+    """set_cookie の secure 属性を判定する純関数。
+
+    RLC-01 (3): トンネル(Cloudflare Quick Tunnel)経由は常にHTTPS終端されるため
+    secure=True にできる。一方ローカルブリッジ/ブラウザ連携は http://127.0.0.1
+    のみで待ち受けるため、secure=True にすると Cookie がブラウザから送信されず
+    セッションが機能しなくなる。よって tunnel_enabled にそのまま追従させる。
+    """
+    return bool(tunnel_enabled)
+
+
+def cookie_max_age(room_ttl_minutes: int) -> int:
+    """set_cookie の max_age(秒)を算出する純関数。
+
+    RLC-01 (1): room_ttl_minutes <= 0 は「無期限ルーム」を意味するが、Cookie
+    自体を無期限(max_age省略)にはしない設計とし、24時間(86400秒)を使う。
+    """
+    return room_ttl_minutes * 60 if room_ttl_minutes > 0 else 86400
+
+
 def find_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, 0))
@@ -269,7 +289,11 @@ class RoomServer:
             session.session_id,
             httponly=True,
             samesite="Lax",
-            max_age=self._config.room_ttl_minutes * 60,
+            # RLC-01 (3): トンネル経由(HTTPS)のみ secure を付与する。ローカル
+            # ブリッジ(http://127.0.0.1)まで secure にすると Cookie が送信されず
+            # セッションが機能しなくなるため tunnel_enabled で条件分岐する。
+            secure=cookie_secure(getattr(self._config, "tunnel_enabled", True)),
+            max_age=cookie_max_age(self._config.room_ttl_minutes),
         )
         return response
 

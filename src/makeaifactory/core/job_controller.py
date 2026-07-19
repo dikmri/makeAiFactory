@@ -12,6 +12,7 @@ from ..comfy.api_client import ComfyApiClient
 from ..comfy.progress_tracker import ProgressTracker, build_node_labels, count_progress_stages
 from ..comfy.workflow_patcher import DevModeOverrides
 from ..comfy.server_controller import ComfyServerController
+from ..core.atomic_json import write_json_atomic
 from ..core.generation_executor import GenerationExecutor, GenerationRequest
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
@@ -125,8 +126,10 @@ class JobController:
         )
 
         def _save_history(h: dict) -> None:
-            with (job_dir / "history.json").open("w", encoding="utf-8") as f:
-                json.dump(h, f, ensure_ascii=False, indent=2)
+            # DAT-01: job_dir はジョブごとの専用ディレクトリ (outputs配下、
+            # ユーザーが直接開く場所) で history.json は1回しか書かないため、
+            # ".bak" が無駄に増えないよう make_backup=False にする。
+            write_json_atomic(job_dir / "history.json", h, ensure_ascii=False, indent=2, make_backup=False)
 
         def _on_stage(stage: str) -> None:
             # "connecting"/"generating" は既存実装でも追加のJobProgress通知が
@@ -189,8 +192,8 @@ class JobController:
             ram_total_gb=self._ram_total_gb,
         )
 
-        with (job_dir / "job.json").open("w", encoding="utf-8") as f:
-            json.dump(job.to_dict(), f, ensure_ascii=False, indent=2)
+        # DAT-01: history.json と同じ理由でmake_backup=False (per-jobファイル)。
+        write_json_atomic(job_dir / "job.json", job.to_dict(), ensure_ascii=False, indent=2, make_backup=False)
 
         logger.info(
             "Job完了: %s → %s (%.0fs, VRAMピーク=%.1fGB, モード=%s)",

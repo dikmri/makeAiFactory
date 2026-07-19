@@ -78,7 +78,23 @@ class AppPaths:
 
     @property
     def workflow_dir(self) -> Path:
+        """バンドルされたworkflowリソース (app_root配下)。読み取り専用。
+
+        presets/ (プリセット定義) と workflow_patch_rules.json はここから読むだけで
+        書き込みは行わない。サニタイズ派生物 (api_source/runtime_template/report) の
+        書き込み先は workflow_runtime_dir (runtime_root配下) を使うこと。
+        """
         return self.app_dir / "workflow"
+
+    @property
+    def workflow_runtime_dir(self) -> Path:
+        """workflow派生物 (api_source/runtime_template/analysis_report) の書き込み先。
+
+        runtime_root配下なので、インストール先がread-onlyでも書き込め、
+        アプリ更新で bundled 側 (_internal 等) が丸ごと置換されてもユーザーの
+        ワークフロー選択・調整 (dev modeでの編集含む) が保持される。
+        """
+        return self._root / "workflow"
 
     @property
     def manifest_dir(self) -> Path:
@@ -175,12 +191,19 @@ class AppPaths:
         return self.workflow_presets_dir / source_filename
 
     def api_source_json(self) -> Path:
-        return self.workflow_dir / "makeAiFactory_api_source.json"
+        """サニタイズ元のAPI版workflow。runtime側 (書き込み可能)。"""
+        return self.workflow_runtime_dir / "makeAiFactory_api_source.json"
 
     def runtime_template_json(self) -> Path:
-        return self.workflow_dir / "makeAiFactory_runtime_template.json"
+        """サニタイズ済みruntime template。runtime側 (書き込み可能)。"""
+        return self.workflow_runtime_dir / "makeAiFactory_runtime_template.json"
+
+    def workflow_analysis_report_md(self) -> Path:
+        """サニタイズ結果のレポート。runtime側 (書き込み可能)。"""
+        return self.workflow_runtime_dir / "workflow_analysis_report.md"
 
     def patch_rules_json(self) -> Path:
+        """バンドル同梱の読み取り専用リソース (workflow_dir配下のまま)。"""
         return self.workflow_dir / "workflow_patch_rules.json"
 
     def runtime_manifest_json(self) -> Path:
@@ -200,5 +223,6 @@ class AppPaths:
             self.cache_dir,
             self.outputs_dir,
             self.uv_dir,
+            self.workflow_runtime_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)

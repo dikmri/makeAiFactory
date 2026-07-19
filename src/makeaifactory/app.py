@@ -5,11 +5,12 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, Slot
 from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
@@ -18,6 +19,7 @@ from .gui.icon_data import app_icon
 from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENSIONS
 from .i18n import tr, tr_elapsed
 from .core.app_controller import AppController
+from .core.atomic_json import write_json_atomic
 from .core.batch_output import finalize_batch_item
 from .core.diagnostics import build_diagnostic_payload
 from .core.error_reporter import send_error_report
@@ -26,6 +28,7 @@ from .core.generation_gate import GenerationGate
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
 from .core.paths import AppPaths, _exe_dir
+from .core.retention import run_cleanup
 from .core.settings_store import SettingsStore
 from .domain.errors import MakeAiFactoryError, SystemUnsupportedError
 from .domain.progress import JobProgress, JobState, SetupProgress, SetupState
@@ -65,7 +68,7 @@ from .gui.main_window import MainWindow
 from .gui.remote_room_dialog import RemoteRoomDialog, make_qr_pixmap
 from .gui.local_bridge_dialog import LocalBridgeDialog
 from .remote_room.controller import RemoteRoomController
-from .remote_room.room_config import RemoteRoomConfig
+from .remote_room.room_config import RemoteRoomConfig, build_qr_url
 
 logger = logging.getLogger(__name__)
 
@@ -517,6 +520,19 @@ def run_app() -> int:
     _remote_room: dict = {"ctrl": None, "dlg": None, "generating": False}
     _local_bridge: dict = {"dlg": None}
 
+    # RET-01: 保持期間クリーンアップの定期実行タイマー (setup完了時に1度だけ作る)
+    _retention: dict = {"timer": None}
+
+    def _run_retention_cleanup() -> None:
+        """RET-01: Remote Roomジョブ/古いログ/クリップボード一時ファイルの削除を
+        workerスレッドで実行する(UIをブロックしないため)。retention_hoursは
+        settingsのremote_room設定 (output_retention_hours、既定24) から都度取得する。"""
+        retention_hours = int(settings.remote_room_config.get("output_retention_hours", 24))
+        threading.Thread(
+            target=run_cleanup, args=(paths, retention_hours),
+            daemon=True, name="RetentionCleanup",
+        ).start()
+
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
     # 「現在の生成で終了」フラグ — キャンセルと区別するためだけに使う
@@ -564,6 +580,16 @@ def run_app() -> int:
             window.update_status(tr("✓ v{version} にアップデートされました").format(version=APP_VERSION))
         if settings.discord_bot_enabled and settings.discord_token:
             _start_discord_bot()
+
+        # RET-01: 保持期間切れのRemote Roomジョブ/古いログ/クリップボード一時
+        # ファイルの削除を1回実行し、以後6時間毎に繰り返す。修復完了後にも
+        # setup_ready経由でこのSlotが再度呼ばれるため、タイマーの多重生成は防ぐ。
+        _run_retention_cleanup()
+        if _retention["timer"] is None:
+            timer = QTimer(window)
+            timer.timeout.connect(_run_retention_cleanup)
+            timer.start(6 * 60 * 60 * 1000)
+            _retention["timer"] = timer
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
@@ -774,9 +800,20 @@ def run_app() -> int:
 
     @Slot(str, str)
     def _on_remote_url_ready(url: str, pin: str) -> None:
-        """URL 公開時にメインウィンドウの drop ページへ QR を表示する。"""
-        qr_url = f"{url}?pin={pin}" if pin else url
-        hint = tr("📱 スキャンで入室 (PIN自動入力)") if pin else tr("📱 スキャンして入室")
+        """URL 公開時にメインウィンドウの drop ページへ QR を表示する。
+
+        RLC-01 (5): QRにPINを埋め込むかは settings.remote_room_config の
+        qr_include_pin (既定True=現状維持) で切り替える。OFFの場合もPIN自体は
+        引き続き必須のままなので、その旨をヒント文言で案内する。
+        """
+        include_pin = bool(settings.remote_room_config.get("qr_include_pin", True))
+        qr_url = build_qr_url(url, pin, include_pin)
+        if not pin:
+            hint = tr("📱 スキャンして入室")
+        elif include_pin:
+            hint = tr("📱 スキャンで入室 (PIN自動入力)")
+        else:
+            hint = tr("📱 スキャンしてPINを入力")
         pixmap = make_qr_pixmap(qr_url, 160)
         if pixmap:
             window.show_remote_room_qr(pixmap, hint)
@@ -791,6 +828,11 @@ def run_app() -> int:
     def _on_remote_room_requested() -> None:
         dlg = _remote_room.get("dlg")
         if dlg is None or not dlg.isVisible():
+            # RLC-01 (6): 稼働中にダイアログを閉じて再度開くと、close()だけでは
+            # ダイアログは破棄されない(Qtの親子関係で残存)ため、ここで新しい
+            # ダイアログを作る前に旧ダイアログを退避しておく。
+            old_dlg = dlg
+            room_ctrl = _remote_room.get("ctrl")
             dlg = RemoteRoomDialog(window)
             _remote_room["dlg"] = dlg
 
@@ -831,6 +873,39 @@ def run_app() -> int:
             dlg.stop_accepting.connect(lambda: _remote_room["ctrl"].stop_accepting() if _remote_room["ctrl"] else None)
             dlg.cancel_job.connect(lambda: _remote_room["ctrl"].cancel_current_job() if _remote_room["ctrl"] else None)
             dlg.clear_queue.connect(lambda: _remote_room["ctrl"].clear_queue() if _remote_room["ctrl"] else None)
+
+            if room_ctrl is not None and room_ctrl.is_running:
+                # 投入口が稼働したままダイアログだけ閉じ→再度開かれたケース。
+                # 新ダイアログへシグナルを繋ぎ直し、現在の状態を反映する。
+                sig = room_ctrl.signals
+                if old_dlg is not None:
+                    # 旧ダイアログへの接続はQueuedConnectionのまま残り続けるため
+                    # 明示的に切ってから破棄する(close()だけではdlgは破棄されない)。
+                    for signal, slot in (
+                        (sig.status_changed, old_dlg.update_status),
+                        (sig.public_url_ready, old_dlg.set_public_url),
+                        (sig.stats_changed, old_dlg.update_stats),
+                        (sig.error, old_dlg.show_error_msg),
+                    ):
+                        try:
+                            signal.disconnect(slot)
+                        except (RuntimeError, TypeError):
+                            pass
+                sig.status_changed.connect(dlg.update_status,    Qt.ConnectionType.QueuedConnection)
+                sig.public_url_ready.connect(dlg.set_public_url, Qt.ConnectionType.QueuedConnection)
+                sig.stats_changed.connect(dlg.update_stats,      Qt.ConnectionType.QueuedConnection)
+                sig.error.connect(dlg.show_error_msg,            Qt.ConnectionType.QueuedConnection)
+                # 取得できる範囲(ステータス/統計/URL・PIN)で現在の状態を反映する。
+                # URLはトンネル確立後にしか判明しないため、未確立中は「稼働中」表示のみ。
+                if room_ctrl.public_url:
+                    dlg.update_status("running", tr("公開中: {public_url}").format(public_url=room_ctrl.public_url))
+                    dlg.set_public_url(room_ctrl.public_url, room_ctrl.pin)
+                else:
+                    dlg.update_status("running", tr("稼働中"))
+                dlg.update_stats(room_ctrl.get_stats())
+
+            if old_dlg is not None:
+                old_dlg.deleteLater()
 
         dlg.show()
         dlg.raise_()
@@ -994,12 +1069,15 @@ def run_app() -> int:
                 return tr("必須ノード (画像入力/動画出力) が含まれていないため適用できません")
 
             try:
-                with paths.api_source_json().open("w", encoding="utf-8") as f:
-                    json.dump(source, f, ensure_ascii=False, indent=2)
-                with paths.runtime_template_json().open("w", encoding="utf-8") as f:
-                    json.dump(sanitized, f, ensure_ascii=False, indent=2)
+                # runtime側 (workflow_runtime_dir) は通常 ensure_dirs()/setup() で
+                # 既に作成済みだが、念のため防御的に作成しておく。
+                # DAT-01: 書き込みをwrite_json_atomicへ置換 (途中終了で壊れた
+                # JSONが残ることを防ぐ)。
+                paths.api_source_json().parent.mkdir(parents=True, exist_ok=True)
+                write_json_atomic(paths.api_source_json(), source, ensure_ascii=False, indent=2)
+                write_json_atomic(paths.runtime_template_json(), sanitized, ensure_ascii=False, indent=2)
                 report = generate_analysis_report(source, sanitized)
-                with (paths.workflow_dir / "workflow_analysis_report.md").open("w", encoding="utf-8") as f:
+                with paths.workflow_analysis_report_md().open("w", encoding="utf-8") as f:
                     f.write(report)
             except Exception as e:
                 return tr("保存に失敗しました: {e}").format(e=e)
@@ -1236,6 +1314,16 @@ def run_app() -> int:
             else:
                 logger.exception("生成中に予期しないエラー")
                 signals.error.emit(tr("生成失敗"), str(e), "", False)
+        finally:
+            # RET-01: クリップボード貼り付け由来の一時PNG (%TEMP%/maf_clip_*.png) は
+            # このjob終了時に削除する (成功/失敗/キャンセルいずれも対象)。
+            # バッチ経路はクリップボード入力が無いためここでのみ扱う。
+            try:
+                if image_path.name.startswith("maf_clip_") and \
+                        image_path.parent.resolve() == Path(tempfile.gettempdir()).resolve():
+                    image_path.unlink(missing_ok=True)
+            except Exception:
+                logger.warning("クリップボード一時ファイルの削除に失敗しました: %s", image_path, exc_info=True)
 
     async def _run_batch(input_folder: Path, output_folder: Path) -> None:
         # バッチ全体の開始をgateへ通知する (batch_active=True、bot_state="batch"にミラー)。
@@ -1266,8 +1354,10 @@ def run_app() -> int:
 
             def _append_manifest(entry: dict) -> None:
                 # manifestへの記録はbest-effort。失敗してもバッチ処理自体は継続する。
-                # 原子的書き込みは後続PRで共通化予定のため、現時点では
-                # 「既存全体を読んで1件追記し、全体を書き戻す」素朴な実装でよい。
+                # DAT-01: 書き込み自体はwrite_json_atomicで原子化 (途中終了で
+                # 壊れたJSONが残ることを防ぐ)。出力フォルダ (ユーザーが直接見る
+                # 場所) に置かれるファイルのため、画像枚数分 ".bak" が増えて
+                # 見た目が煩雑にならないよう make_backup=False とする。
                 import json
                 try:
                     try:
@@ -1277,8 +1367,7 @@ def run_app() -> int:
                     except (FileNotFoundError, json.JSONDecodeError):
                         existing = []
                     existing.append(entry)
-                    with manifest_path.open("w", encoding="utf-8") as f:
-                        json.dump(existing, f, ensure_ascii=False, indent=2)
+                    write_json_atomic(manifest_path, existing, ensure_ascii=False, indent=2, make_backup=False)
                 except Exception as e:
                     logger.debug("batch_manifest.json 書き込み失敗: %s", e)
 
