@@ -8,6 +8,7 @@ from typing import Callable
 
 from ..comfy.server_controller import ComfyServerController
 from ..comfy.workflow_sanitizer import load_and_sanitize
+from ..core.generation_executor import GenerationExecutor
 from ..core.generation_gate import GenerationGate
 from ..core.job_controller import JobController
 from ..core.log_manager import get_setup_logger, setup_logging
@@ -50,12 +51,22 @@ JobProgressCallback = Callable[[JobProgress], None]
 
 
 class AppController:
-    def __init__(self, paths: AppPaths, settings: SettingsStore, gate: GenerationGate | None = None):
+    def __init__(
+        self,
+        paths: AppPaths,
+        settings: SettingsStore,
+        gate: GenerationGate | None = None,
+        executor: GenerationExecutor | None = None,
+    ):
         self._paths = paths
         self._settings = settings
         # 生成admissionゲート。app.py から共有インスタンスを受け取るのが通常経路。
         # 未指定 (テスト等) の場合はbot_stateミラー無しの単独インスタンスを持つ。
         self._gate = gate if gate is not None else GenerationGate(None)
+        # SCH-01 PR4: gate取得(submit)〜release、request_cancelによる照合キャンセルまで
+        # 一括で担う共有executor。app.py から共有インスタンスを受け取るのが通常経路。
+        # JobController / RemoteRoomController(owner="bridge") へ配布する。
+        self._executor = executor if executor is not None else GenerationExecutor(paths, self._gate)
         self._state = RuntimeState(paths.runtime_root)
         self._server: ComfyServerController | None = None
         self._job_ctrl: JobController | None = None
@@ -357,7 +368,7 @@ class AppController:
 
         if self._local_bridge is None:
             self._local_bridge = RemoteRoomController(
-                self._settings, self._paths, gate=self._gate, owner="bridge",
+                self._settings, self._paths, gate=self._gate, owner="bridge", executor=self._executor,
             )
         if not self._local_bridge.is_running:
             cfg = RemoteRoomConfig(
@@ -404,7 +415,7 @@ class AppController:
             ram_total   = self._system_info.ram_gb      if self._system_info else 0.0
             rm = self._load_runtime_manifest()
             self._job_ctrl = JobController(
-                self._paths, self._server, self._settings, template,
+                self._paths, self._server, self._settings, template, self._executor,
                 gpu_info=gpu_info, ram_total_gb=ram_total,
                 sage_attention_mode=rm.sageattn_mode,
                 # manifestのenabledを常に正とする。過去にインストール確認済みで

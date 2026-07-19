@@ -11,7 +11,6 @@ import json
 import logging
 import random
 import secrets
-import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -21,13 +20,13 @@ from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
-from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
-from ..core.generation_executor import load_template_for_workflow, resolve_output_with_retry
+from ..core.generation_executor import GenerationExecutor, GenerationRequest, load_template_for_workflow
 from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
+from ..domain.errors import JobCancelledError
 from ..i18n import tr
 from .auth import AuthManager
 from .rate_limiter import RateLimiter
@@ -61,6 +60,7 @@ class RemoteRoomController:
         paths: AppPaths,
         gate: GenerationGate | None = None,
         owner: str = "remote",
+        executor: GenerationExecutor | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -70,12 +70,15 @@ class RemoteRoomController:
         # インターネット投入口 (owner="remote") とローカルブリッジ (owner="bridge") は
         # 同じ RemoteRoomController 実装を使い回すため、gate上のowner名で区別する。
         self._owner = owner
+        # SCH-01 PR4: gate取得(submit)〜release、request_cancelによる照合キャンセルまで
+        # 一括で担う共有executor。app.py/AppController から共有インスタンスを受け取るのが
+        # 通常経路。未指定 (単体テスト等) の場合は上のgateと組にした自前のexecutorを持つ。
+        self._executor = executor if executor is not None else GenerationExecutor(paths, self._gate)
         self._signals = RemoteRoomSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._stop_event: asyncio.Event | None = None
-        self._current_comfy_client: ComfyApiClient | None = None
         self._config: RemoteRoomConfig | None = None
         self._pin: str = ""
         self._ip_salt = secrets.token_hex(16)
@@ -115,10 +118,13 @@ class RemoteRoomController:
         self._accepting[0] = False
         if self._loop and self._stop_event:
             self._loop.call_soon_threadsafe(self._stop_event.set)
-        if self._loop and self._current_comfy_client:
-            asyncio.run_coroutine_threadsafe(
-                self._current_comfy_client.interrupt(), self._loop
-            )
+        # SCH-01 PR4: 実行中ジョブも止める。executor.request_cancel は
+        # 実行中レジストリと owner=self._owner を照合できた時だけ interrupt を
+        # 発行するため、他経路のジョブ実行中に誤って止めてしまうことがない
+        # (従来の self._current_comfy_client.interrupt() 無条件発行を置き換え)。
+        # request_cancel はどのスレッドからでも呼べるため、専用スレッドの
+        # イベントループ (self._loop) 経由にする必要はない。
+        self._executor.request_cancel(self._owner)
         logger.info("RemoteRoomController 停止要求")
 
     def stop_accepting(self) -> None:
@@ -126,10 +132,12 @@ class RemoteRoomController:
         self._accepting[0] = False
 
     def cancel_current_job(self) -> None:
-        if self._loop and self._current_comfy_client:
-            asyncio.run_coroutine_threadsafe(
-                self._current_comfy_client.interrupt(), self._loop
-            )
+        """現在実行中の ComfyUI ジョブをキャンセルする。
+
+        SCH-01 PR4: owner=self._owner のジョブが実際に実行中の時だけ
+        executor.request_cancel が interrupt を発行する (誤爆防止)。
+        """
+        self._executor.request_cancel(self._owner)
 
     def clear_queue(self) -> None:
         """キュー内の待機ジョブをすべてキャンセルする。"""
@@ -364,19 +372,10 @@ class RemoteRoomController:
             self._emit_stats()
             return
 
-        # デキュー済みだが実際の生成開始前にgateを取得する。取得待ち中に
-        # キャンセルされた (ジョブ自体がcancelled化、あるいはコントローラ停止) 場合は
-        # 待たずに終了する。
-        lease = await self._gate.wait_acquire(
-            self._owner, cancel_check=lambda: job.status == "cancelled" or not self._running,
-        )
-        if lease is None:
-            job.status = "cancelled"
-            job.completed_at = datetime.now()
-            job.error_message = "生成待機中にキャンセルされました。"
-            self._emit_stats()
-            return
-
+        # SCH-01 PR4: gate取得(wait_acquire)〜release は _generate_video 内の
+        # executor.submit() へ集約した (以前はここで個別にwait_acquire/releaseして
+        # いた)。取得待ち中・生成中いずれのキャンセルもJobCancelledErrorとして
+        # 届くため、下のexcept節で統一的に「cancelled」状態として扱う。
         job.status = "running"
         job.progress_label = "生成準備中"
         self._signals.job_started.emit(job.job_id, job.image_path)
@@ -397,6 +396,15 @@ class RemoteRoomController:
             self._signals.job_done.emit(job.job_id, str(output_path))
             self._emit_stats()
             logger.info("RemoteRoom ジョブ完了: %s → %s", job.job_id, output_path)
+        except JobCancelledError:
+            # gate取得待ち中・生成中いずれのキャンセルもここに合流する。
+            # _job_worker側の汎用except Exceptionでfailed扱いに上書きされない
+            # よう、ここで完結させ再送出しない。
+            job.status = "cancelled"
+            job.completed_at = datetime.now()
+            job.error_message = "生成がキャンセルされました。"
+            self._emit_stats()
+            logger.info("RemoteRoom ジョブキャンセル: %s", job.job_id)
         except Exception as e:
             job.status = "failed"
             job.completed_at = datetime.now()
@@ -404,8 +412,6 @@ class RemoteRoomController:
             self._signals.job_error.emit(job.job_id, str(e))
             self._emit_stats()
             raise
-        finally:
-            self._gate.release(lease)
 
     def _on_job_progress(self, job: RemoteJob, pct: float, label: str) -> None:
         job.progress_pct = pct
@@ -413,6 +419,11 @@ class RemoteRoomController:
         self._signals.job_progress.emit(job.job_id, pct, label)
 
     # ── ComfyUI 動画生成 (DiscordBotController._generate_video と同様の構造) ──
+
+    def _make_client(self, comfy_port: int) -> ComfyApiClient:
+        """ComfyApiClient を生成する。テストでの差し替え用に切り出したフック。"""
+        base_url = f"http://{COMFY_HOST}:{comfy_port}"
+        return ComfyApiClient(base_url)
 
     async def _generate_video(
         self,
@@ -430,65 +441,62 @@ class RemoteRoomController:
         template = load_template_for_workflow(self._paths, job.workflow)
 
         job_dir = Path(job.image_path).parent
-        base_url = f"http://{COMFY_HOST}:{comfy_port}"
-        client = ComfyApiClient(base_url)
-        self._current_comfy_client = client
+        client = self._make_client(comfy_port)
 
-        try:
-            on_progress(0.0, tr("ComfyUI 接続中..."))
-            await client.wait_until_ready(timeout_sec=30)
+        seed = random.randint(0, 2**32 - 1)
+        req = GenerationRequest(
+            owner=self._owner,
+            job_id=job.job_id,
+            input_image=Path(job.image_path),
+            job_dir=job_dir,
+            template=template,
+            seed=seed,
+            unet_high_name=preset_def["unet_high"],
+            unet_low_name=preset_def["unet_low"],
+            sage_attention_mode="disabled",
+            upload_basename=f"remote_{job.job_id}.png",
+            ready_timeout_sec=30,
+        )
 
-            upload_src = job_dir / f"remote_{job.job_id}.png"
-            shutil.copy2(job.image_path, upload_src)
-            on_progress(5.0, tr("画像アップロード中..."))
-            uploaded_name = await client.upload_image(upload_src)
+        stage_estimator = StageProgressEstimator(count_progress_stages(template))
 
-            seed = random.randint(0, 2**32 - 1)
-            ctx = WorkflowPatchContext(
-                job_id=job.job_id,
-                uploaded_image_name=uploaded_name,
-                output_prefix=make_output_prefix(job.job_id),
-                seed=seed,
-                unet_high_name=preset_def["unet_high"],
-                unet_low_name=preset_def["unet_low"],
-                sage_attention_mode="disabled",
-            )
-            patched = patch_workflow(template, ctx)
+        def _on_stage(stage: str) -> None:
+            if stage == "connecting":
+                on_progress(0.0, tr("ComfyUI 接続中..."))
+            elif stage == "uploading":
+                on_progress(5.0, tr("画像アップロード中..."))
+            elif stage == "queueing":
+                on_progress(8.0, tr("生成キュー追加中..."))
+            elif stage == "generating":
+                on_progress(10.0, tr("生成中..."))
+            elif stage == "resolving":
+                on_progress(92.0, tr("動画を保存中..."))
 
-            on_progress(8.0, tr("生成キュー追加中..."))
-            prompt_id = await client.queue_prompt(patched)
-            logger.info("RemoteRoom 生成開始: job=%s prompt=%s", job.job_id, prompt_id)
+        def _on_event(event) -> None:
+            if event.event_type == "progress" and event.max_steps > 0:
+                stage_pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
+                pct = 10.0 + stage_pct * 0.80
+                on_progress(pct, tr("生成中... {pct}%").format(pct=int(pct)))
 
-            on_progress(10.0, tr("生成中..."))
-            stage_estimator = StageProgressEstimator(count_progress_stages(template))
-            async for event in client.watch_progress(prompt_id):
-                if event.event_type == "progress" and event.max_steps > 0:
-                    stage_pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
-                    pct = 10.0 + stage_pct * 0.80
-                    on_progress(pct, tr("生成中... {pct}%").format(pct=int(pct)))
+        # SCH-01 PR4: gate取得(wait_acquire)〜release をここへ集約する (submit()。
+        # 以前は_process_job側で個別にwait_acquire/releaseしていた)。cancel_check は
+        # PR1相当 (job.status=="cancelled" またはコントローラ停止) をそのまま渡す。
+        result = await self._executor.submit(
+            req, client, on_stage=_on_stage, on_event=_on_event,
+            cancel_check=lambda: job.status == "cancelled" or not self._running,
+        )
 
-            on_progress(92.0, tr("動画を保存中..."))
+        final_output = result.output_path
+        with (job_dir / "job.json").open("w", encoding="utf-8") as f:
+            json.dump({
+                "job_id": job.job_id,
+                "status": "completed",
+                "created_at": job.created_at.isoformat(),
+                "completed_at": datetime.now().isoformat(),
+            }, f, ensure_ascii=False, indent=2)
 
-            # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
-            output_mp4, _history = await resolve_output_with_retry(
-                client, prompt_id, self._paths.comfyui_output_dir, job.job_id,
-            )
-
-            final_output = job_dir / "output.mp4"
-            shutil.copy2(output_mp4, final_output)
-
-            with (job_dir / "job.json").open("w", encoding="utf-8") as f:
-                json.dump({
-                    "job_id": job.job_id,
-                    "status": "completed",
-                    "created_at": job.created_at.isoformat(),
-                    "completed_at": datetime.now().isoformat(),
-                }, f, ensure_ascii=False, indent=2)
-
-            on_progress(100.0, tr("完了"))
-            return final_output
-        finally:
-            self._current_comfy_client = None
+        on_progress(100.0, tr("完了"))
+        return final_output
 
     # ── TTL 監視 ──────────────────────────────────────────────────────────────
 

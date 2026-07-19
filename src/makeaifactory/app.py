@@ -21,6 +21,7 @@ from .core.app_controller import AppController
 from .core.batch_output import finalize_batch_item
 from .core.diagnostics import build_diagnostic_payload
 from .core.error_reporter import send_error_report
+from .core.generation_executor import GenerationExecutor
 from .core.generation_gate import GenerationGate
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
@@ -147,7 +148,12 @@ def run_app() -> int:
     # プロセス内admission guard + bot_state単一書き手。生成の入口 (Desktop単発/
     # バッチ/Discord/Remote Room/Local Bridge) すべてがこのgateを介して排他制御される。
     gate = GenerationGate(paths.runtime_root)
-    ctrl = AppController(paths, settings, gate)
+    # SCH-01 PR4: submit()(gate取得〜release一括)/request_cancel(owner/job_id照合
+    # によるキャンセル)を担う共有executor。従来は各コントローラが個別に
+    # GenerationExecutor(paths)を自前生成していたが、gateと同様に単一インスタンスを
+    # JobController・DiscordBotController・RemoteRoomController(remote/bridge)へ配布する。
+    executor = GenerationExecutor(paths, gate)
+    ctrl = AppController(paths, settings, gate, executor)
     window = MainWindow()
     window.set_paths(paths.logs_dir, paths.outputs_dir)
     # 修復コールバックの登録 (window.set_repair_callback(_trigger_repair)) は、
@@ -570,8 +576,9 @@ def run_app() -> int:
 
     @Slot(Path, str, float, float, float)
     def _on_job_done(output: Path, source_stem: str, elapsed_sec: float, vram_peak: float, vram_avg: float) -> None:
-        # bot_state.jsonの"idle"化は_run_jobのgate.release()で既に完了している。
-        # ここではgateが把握している現在状態を書き直すだけ(keep-alive相当)。
+        # bot_state.jsonの"idle"化はJobController.run_job内(executor.submit()経由)の
+        # gate.release()で既に完了している。ここではgateが把握している現在状態を
+        # 書き直すだけ(keep-alive相当)。
         gate.refresh_bot_state()
         window.show_result(output, source_stem, elapsed_sec, vram_peak, vram_avg)
         _play_complete_se()
@@ -638,7 +645,7 @@ def run_app() -> int:
         logger.info("_start_discord_bot 開始 (既存ctrl=%s)", _discord["ctrl"] is not None)
         if _discord["ctrl"]:
             _discord["ctrl"].stop()
-        bot = DiscordBotController(settings, paths, gate=gate)
+        bot = DiscordBotController(settings, paths, gate=gate, executor=executor)
         _discord["ctrl"] = bot
         sig = bot.signals
         sig.job_started.connect(_on_discord_job_started,   Qt.ConnectionType.QueuedConnection)
@@ -796,7 +803,7 @@ def run_app() -> int:
                     ctrl.build_workflow_templates()
                 except Exception:
                     logger.warning("インターネット投入口: ワークフローテンプレート生成に失敗", exc_info=True)
-                room_ctrl = RemoteRoomController(settings, paths, gate=gate, owner="remote")
+                room_ctrl = RemoteRoomController(settings, paths, gate=gate, owner="remote", executor=executor)
                 _remote_room["ctrl"] = room_ctrl
                 sig = room_ctrl.signals
                 sig.status_changed.connect(dlg.update_status,          Qt.ConnectionType.QueuedConnection)
@@ -1197,22 +1204,17 @@ def run_app() -> int:
         def _cb(p: JobProgress):
             signals.job_progress.emit(p)
 
-        # まず即座に取得を試み、既に他経路 (Discord/Remote Room/バッチ等) が
-        # 生成中で取れなかった場合のみ「待っています」を通知してから待機する
-        # (取れる状況なら余計な表示を出さない)。
-        lease = gate.try_acquire("desktop")
-        if lease is None:
+        # SCH-01 PR4: gate取得(try_acquire→待機通知→wait_acquire)〜releaseは
+        # JobController.run_job (内部でexecutor.submit()を使う) へ集約した。
+        # 即座に取得できず待たされる場合のみ、on_waitで従来と同じ通知を出す。
+        def _on_wait() -> None:
             signals.job_progress.emit(JobProgress(
                 state=JobState.PENDING, message=tr("他の生成の完了を待っています..."),
             ))
-            lease = await gate.wait_acquire("desktop", cancel_check=_single_cancel.is_set)
-            if lease is None:
-                signals.job_cancelled.emit()
-                return
 
         try:
             job_ctrl = ctrl.get_job_controller()
-            output, bench = await job_ctrl.run_job(image_path, on_progress=_cb)
+            output, bench = await job_ctrl.run_job(image_path, on_progress=_cb, on_wait=_on_wait)
             auto_folder = settings.auto_save_folder
             if settings.auto_save_enabled and auto_folder:
                 try:
@@ -1234,8 +1236,6 @@ def run_app() -> int:
             else:
                 logger.exception("生成中に予期しないエラー")
                 signals.error.emit(tr("生成失敗"), str(e), "", False)
-        finally:
-            gate.release(lease)
 
     async def _run_batch(input_folder: Path, output_folder: Path) -> None:
         # バッチ全体の開始をgateへ通知する (batch_active=True、bot_state="batch"にミラー)。
@@ -1299,16 +1299,18 @@ def run_app() -> int:
                         p.message,
                     )
 
-                # バッチのアイテムごとにgateを取得する。アイテム間はgateが空くため、
-                # そのタイミングでDiscord割り込みジョブ("discord"owner)が取得できる
-                # (batch_active中はbatch/discordのみ取得可のadmissionポリシー)。
-                lease = await gate.wait_acquire("batch", cancel_check=_batch_cancel.is_set)
-                if lease is None:
-                    break  # 取得待ち中にキャンセルされた
-
+                # SCH-01 PR4: バッチのアイテムごとのgate取得(wait_acquire)〜releaseは
+                # JobController.run_job(owner="batch") 内のexecutor.submit()へ集約した。
+                # アイテム間はgateが空くため、そのタイミングでDiscord割り込みジョブ
+                # ("discord"owner)が取得できる (batch_active中はbatch/discordのみ
+                # 取得可のadmissionポリシー)。取得待ち中にキャンセルされた場合も
+                # run_jobがJobCancelledErrorを送出するため、下のexcept節に合流する
+                # (_batch_cancel.is_set()により「中断」としてログされ、manifestには
+                # 記録されない。以前は即breakしていたが、結果は同じで次周回頭の
+                # cancel判定でbreakするため実質差分は無い)。
                 try:
                     job_ctrl = ctrl.get_job_controller()
-                    output, _bench = await job_ctrl.run_job(image_path, on_progress=_cb)
+                    output, _bench = await job_ctrl.run_job(image_path, on_progress=_cb, owner="batch")
                     final = finalize_batch_item(image_path, output, output_folder, end_dir)
                     completed += 1
                     _append_manifest({
@@ -1333,8 +1335,6 @@ def run_app() -> int:
                             "error": str(e),
                             "timestamp": time.time(),
                         })
-                finally:
-                    gate.release(lease)
 
                 # Discord 割り込み生成: 1件終了後、割り込みキューが空になるまで待機
                 # (既存のハンドシェイクは変更しない。アイテム間でgateが空いているため
@@ -1376,7 +1376,8 @@ def run_app() -> int:
 
     @Slot(Path)
     def _on_image_dropped(path: Path) -> None:
-        # bot_state.jsonへの反映は_run_job内のgate.wait_acquire()ミラーが行う。
+        # bot_state.jsonへの反映はJobController.run_job内(executor.submit()経由)の
+        # gate.wait_acquire()ミラーが行う。
         window.enter_single_mode(path)
         window.update_single_progress(tr("生成を準備しています..."), 0.0, -1.0)
 

@@ -25,6 +25,12 @@ class ComfyApiClient:
     def client_id(self) -> str:
         return self._client_id
 
+    @property
+    def base_url(self) -> str:
+        """SCH-01 PR4: GenerationExecutorの実行中レジストリがinterrupt発行先を
+        特定するために参照する (owner/job_id照合済みのcancelのみに使う)。"""
+        return self._base
+
     async def wait_until_ready(self, timeout_sec: int = 120) -> None:
         deadline = asyncio.get_event_loop().time() + timeout_sec
         async with httpx.AsyncClient(timeout=5) as client:
