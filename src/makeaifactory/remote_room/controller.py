@@ -353,65 +353,72 @@ class RemoteRoomController:
     async def _process_job(self, job: RemoteJob) -> None:
         assert self._config is not None
 
-        # フォルダバッチ生成中はリジェクト
-        if self._gate.batch_active:
-            job.status = "failed"
-            job.completed_at = datetime.now()
-            job.error_message = "現在フォルダ一括生成中のため受付できません。"
-            self._emit_stats()
-            return
-        comfy_port = self._gate.comfy_port
-        if comfy_port == 0:
-            # gate.set_comfy_port() が未実行 (単体テスト等) の場合は、従来どおり
-            # bot_state.json から直接フォールバックする
-            _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
-        if comfy_port == 0:
-            job.status = "failed"
-            job.completed_at = datetime.now()
-            job.error_message = "ComfyUI のポートが不明です。アプリを再起動してください。"
-            self._emit_stats()
-            return
-
-        # SCH-01 PR4: gate取得(wait_acquire)〜release は _generate_video 内の
-        # executor.submit() へ集約した (以前はここで個別にwait_acquire/releaseして
-        # いた)。取得待ち中・生成中いずれのキャンセルもJobCancelledErrorとして
-        # 届くため、下のexcept節で統一的に「cancelled」状態として扱う。
-        job.status = "running"
-        job.progress_label = "生成準備中"
-        self._signals.job_started.emit(job.job_id, job.image_path)
-        self._emit_stats()
-
         try:
-            output_path = await self._generate_video(
-                job=job,
-                comfy_port=comfy_port,
-                on_progress=lambda pct, label: self._on_job_progress(job, pct, label),
-            )
-            job.status = "completed"
-            job.output_path = str(output_path)
-            job.video_url = f"/api/jobs/{job.job_id}/video"
-            job.completed_at = datetime.now()
-            job.progress_pct = 100.0
-            job.progress_label = "完了"
-            self._signals.job_done.emit(job.job_id, str(output_path))
+            # フォルダバッチ生成中はリジェクト
+            if self._gate.batch_active:
+                job.status = "failed"
+                job.completed_at = datetime.now()
+                job.error_message = "現在フォルダ一括生成中のため受付できません。"
+                self._emit_stats()
+                return
+            comfy_port = self._gate.comfy_port
+            if comfy_port == 0:
+                # gate.set_comfy_port() が未実行 (単体テスト等) の場合は、従来どおり
+                # bot_state.json から直接フォールバックする
+                _fallback_state, comfy_port = read_bot_state(self._paths.runtime_root)
+            if comfy_port == 0:
+                job.status = "failed"
+                job.completed_at = datetime.now()
+                job.error_message = "ComfyUI のポートが不明です。アプリを再起動してください。"
+                self._emit_stats()
+                return
+
+            # SCH-01 PR4: gate取得(wait_acquire)〜release は _generate_video 内の
+            # executor.submit() へ集約した (以前はここで個別にwait_acquire/releaseして
+            # いた)。取得待ち中・生成中いずれのキャンセルもJobCancelledErrorとして
+            # 届くため、下のexcept節で統一的に「cancelled」状態として扱う。
+            job.status = "running"
+            job.progress_label = "生成準備中"
+            self._signals.job_started.emit(job.job_id, job.image_path)
             self._emit_stats()
-            logger.info("RemoteRoom ジョブ完了: %s → %s", job.job_id, output_path)
-        except JobCancelledError:
-            # gate取得待ち中・生成中いずれのキャンセルもここに合流する。
-            # _job_worker側の汎用except Exceptionでfailed扱いに上書きされない
-            # よう、ここで完結させ再送出しない。
-            job.status = "cancelled"
-            job.completed_at = datetime.now()
-            job.error_message = "生成がキャンセルされました。"
-            self._emit_stats()
-            logger.info("RemoteRoom ジョブキャンセル: %s", job.job_id)
-        except Exception as e:
-            job.status = "failed"
-            job.completed_at = datetime.now()
-            job.error_message = str(e)
-            self._signals.job_error.emit(job.job_id, str(e))
-            self._emit_stats()
-            raise
+
+            try:
+                output_path = await self._generate_video(
+                    job=job,
+                    comfy_port=comfy_port,
+                    on_progress=lambda pct, label: self._on_job_progress(job, pct, label),
+                )
+                job.status = "completed"
+                job.output_path = str(output_path)
+                job.video_url = f"/api/jobs/{job.job_id}/video"
+                job.completed_at = datetime.now()
+                job.progress_pct = 100.0
+                job.progress_label = "完了"
+                self._signals.job_done.emit(job.job_id, str(output_path))
+                self._emit_stats()
+                logger.info("RemoteRoom ジョブ完了: %s → %s", job.job_id, output_path)
+            except JobCancelledError:
+                # gate取得待ち中・生成中いずれのキャンセルもここに合流する。
+                # _job_worker側の汎用except Exceptionでfailed扱いに上書きされない
+                # よう、ここで完結させ再送出しない。
+                job.status = "cancelled"
+                job.completed_at = datetime.now()
+                job.error_message = "生成がキャンセルされました。"
+                self._emit_stats()
+                logger.info("RemoteRoom ジョブキャンセル: %s", job.job_id)
+            except Exception as e:
+                job.status = "failed"
+                job.completed_at = datetime.now()
+                job.error_message = str(e)
+                self._signals.job_error.emit(job.job_id, str(e))
+                self._emit_stats()
+                raise
+        finally:
+            # RET-01: 完了・失敗・キャンセル・早期リジェクトいずれの経路を通っても、
+            # 入力画像(input.png)とComfyUIアップロード用コピー(remote_<id>.png)は
+            # ここで都度削除する。output.mp4/job.jsonは保持期間(cleanup_remote_jobs)
+            # まで残す (ブラウザが /api/jobs/<id>/video で output.mp4 を取得するため)。
+            self._cleanup_job_inputs(job)
 
     def _on_job_progress(self, job: RemoteJob, pct: float, label: str) -> None:
         job.progress_pct = pct
@@ -510,8 +517,30 @@ class RemoteRoomController:
 
     # ── クリーンアップ ────────────────────────────────────────────────────────
 
+    def _cleanup_job_inputs(self, job: "RemoteJob") -> None:
+        """RET-01: 1ジョブ分の入力画像(input.png)とComfyUIアップロード用コピー
+        (remote_<job_id>.png)を削除する。`_process_job` の完了/失敗/キャンセル/
+        早期リジェクトいずれの経路からも finally 経由で呼ばれる (都度削除)。
+        output.mp4/job.json は保持期間 (cleanup_remote_jobs) まで残すため
+        ここでは触らない。失敗してもジョブ処理自体には影響させない (ログのみ)。
+        """
+        if not job.image_path:
+            return
+        try:
+            input_path = Path(job.image_path)
+            input_path.unlink(missing_ok=True)
+            upload_copy = input_path.parent / f"remote_{job.job_id}.png"
+            upload_copy.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("RemoteRoom: ジョブ入力の削除に失敗しました: %s", job.job_id, exc_info=True)
+
     def _cleanup_inputs(self) -> None:
-        """入力画像を即時削除する。出力動画は保持期間まで残す。"""
+        """停止時: 未処理分も含め残っている入力画像を即時削除する。出力動画は保持期間まで残す。
+
+        通常は `_process_job` の finally (`_cleanup_job_inputs`) で都度削除
+        されるが、キュー投入されたまま処理されなかったジョブの入力が
+        残る可能性があるため、停止時にまとめて掃除する保険。
+        """
         for job in self._jobs.values():
             if job.image_path:
                 try:

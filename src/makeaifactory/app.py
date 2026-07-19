@@ -5,11 +5,12 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, Slot
 from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
@@ -26,6 +27,7 @@ from .core.generation_gate import GenerationGate
 from .core.install_config import load_runtime_config, save_runtime_config
 from .core.log_manager import setup_logging
 from .core.paths import AppPaths, _exe_dir
+from .core.retention import run_cleanup
 from .core.settings_store import SettingsStore
 from .domain.errors import MakeAiFactoryError, SystemUnsupportedError
 from .domain.progress import JobProgress, JobState, SetupProgress, SetupState
@@ -517,6 +519,19 @@ def run_app() -> int:
     _remote_room: dict = {"ctrl": None, "dlg": None, "generating": False}
     _local_bridge: dict = {"dlg": None}
 
+    # RET-01: 保持期間クリーンアップの定期実行タイマー (setup完了時に1度だけ作る)
+    _retention: dict = {"timer": None}
+
+    def _run_retention_cleanup() -> None:
+        """RET-01: Remote Roomジョブ/古いログ/クリップボード一時ファイルの削除を
+        workerスレッドで実行する(UIをブロックしないため)。retention_hoursは
+        settingsのremote_room設定 (output_retention_hours、既定24) から都度取得する。"""
+        retention_hours = int(settings.remote_room_config.get("output_retention_hours", 24))
+        threading.Thread(
+            target=run_cleanup, args=(paths, retention_hours),
+            daemon=True, name="RetentionCleanup",
+        ).start()
+
     # バッチキャンセル用フラグ（スレッドセーフ）
     _batch_cancel = threading.Event()
     # 「現在の生成で終了」フラグ — キャンセルと区別するためだけに使う
@@ -564,6 +579,16 @@ def run_app() -> int:
             window.update_status(tr("✓ v{version} にアップデートされました").format(version=APP_VERSION))
         if settings.discord_bot_enabled and settings.discord_token:
             _start_discord_bot()
+
+        # RET-01: 保持期間切れのRemote Roomジョブ/古いログ/クリップボード一時
+        # ファイルの削除を1回実行し、以後6時間毎に繰り返す。修復完了後にも
+        # setup_ready経由でこのSlotが再度呼ばれるため、タイマーの多重生成は防ぐ。
+        _run_retention_cleanup()
+        if _retention["timer"] is None:
+            timer = QTimer(window)
+            timer.timeout.connect(_run_retention_cleanup)
+            timer.start(6 * 60 * 60 * 1000)
+            _retention["timer"] = timer
 
     @Slot(JobProgress)
     def _on_job_progress(p: JobProgress) -> None:
@@ -1239,6 +1264,16 @@ def run_app() -> int:
             else:
                 logger.exception("生成中に予期しないエラー")
                 signals.error.emit(tr("生成失敗"), str(e), "", False)
+        finally:
+            # RET-01: クリップボード貼り付け由来の一時PNG (%TEMP%/maf_clip_*.png) は
+            # このjob終了時に削除する (成功/失敗/キャンセルいずれも対象)。
+            # バッチ経路はクリップボード入力が無いためここでのみ扱う。
+            try:
+                if image_path.name.startswith("maf_clip_") and \
+                        image_path.parent.resolve() == Path(tempfile.gettempdir()).resolve():
+                    image_path.unlink(missing_ok=True)
+            except Exception:
+                logger.warning("クリップボード一時ファイルの削除に失敗しました: %s", image_path, exc_info=True)
 
     async def _run_batch(input_folder: Path, output_folder: Path) -> None:
         # バッチ全体の開始をgateへ通知する (batch_active=True、bot_state="batch"にミラー)。
