@@ -7,7 +7,6 @@ Discord Bot Controller と同様の設計:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
 import secrets
@@ -21,6 +20,7 @@ from PySide6.QtCore import QObject, Signal
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
 from ..constants import COMFY_HOST, MODEL_PRESETS
+from ..core.atomic_json import write_json_atomic
 from ..core.bot_state import read_bot_state
 from ..core.generation_executor import GenerationExecutor, GenerationRequest, load_template_for_workflow
 from ..core.generation_gate import GenerationGate
@@ -530,13 +530,21 @@ class RemoteRoomController:
         )
 
         final_output = result.output_path
-        with (job_dir / "job.json").open("w", encoding="utf-8") as f:
-            json.dump({
+        # DAT-01: job.json はジョブごとに1つの専用ディレクトリへ1回だけ書く
+        # ("per-job"ファイル) ため、書き込みのたびに ".bak" が増えて
+        # ジョブ数だけディスクを消費することを避けるため make_backup=False。
+        write_json_atomic(
+            job_dir / "job.json",
+            {
                 "job_id": job.job_id,
                 "status": "completed",
                 "created_at": job.created_at.isoformat(),
                 "completed_at": datetime.now().isoformat(),
-            }, f, ensure_ascii=False, indent=2)
+            },
+            ensure_ascii=False,
+            indent=2,
+            make_backup=False,
+        )
 
         on_progress(100.0, tr("完了"))
         return final_output

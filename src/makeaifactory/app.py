@@ -19,6 +19,7 @@ from .gui.icon_data import app_icon
 from .constants import APP_NAME, APP_VERSION, COMFY_HOST, SUPPORTED_IMAGE_EXTENSIONS
 from .i18n import tr, tr_elapsed
 from .core.app_controller import AppController
+from .core.atomic_json import write_json_atomic
 from .core.batch_output import finalize_batch_item
 from .core.diagnostics import build_diagnostic_payload
 from .core.error_reporter import send_error_report
@@ -1070,11 +1071,11 @@ def run_app() -> int:
             try:
                 # runtime側 (workflow_runtime_dir) は通常 ensure_dirs()/setup() で
                 # 既に作成済みだが、念のため防御的に作成しておく。
+                # DAT-01: 書き込みをwrite_json_atomicへ置換 (途中終了で壊れた
+                # JSONが残ることを防ぐ)。
                 paths.api_source_json().parent.mkdir(parents=True, exist_ok=True)
-                with paths.api_source_json().open("w", encoding="utf-8") as f:
-                    json.dump(source, f, ensure_ascii=False, indent=2)
-                with paths.runtime_template_json().open("w", encoding="utf-8") as f:
-                    json.dump(sanitized, f, ensure_ascii=False, indent=2)
+                write_json_atomic(paths.api_source_json(), source, ensure_ascii=False, indent=2)
+                write_json_atomic(paths.runtime_template_json(), sanitized, ensure_ascii=False, indent=2)
                 report = generate_analysis_report(source, sanitized)
                 with paths.workflow_analysis_report_md().open("w", encoding="utf-8") as f:
                     f.write(report)
@@ -1353,8 +1354,10 @@ def run_app() -> int:
 
             def _append_manifest(entry: dict) -> None:
                 # manifestへの記録はbest-effort。失敗してもバッチ処理自体は継続する。
-                # 原子的書き込みは後続PRで共通化予定のため、現時点では
-                # 「既存全体を読んで1件追記し、全体を書き戻す」素朴な実装でよい。
+                # DAT-01: 書き込み自体はwrite_json_atomicで原子化 (途中終了で
+                # 壊れたJSONが残ることを防ぐ)。出力フォルダ (ユーザーが直接見る
+                # 場所) に置かれるファイルのため、画像枚数分 ".bak" が増えて
+                # 見た目が煩雑にならないよう make_backup=False とする。
                 import json
                 try:
                     try:
@@ -1364,8 +1367,7 @@ def run_app() -> int:
                     except (FileNotFoundError, json.JSONDecodeError):
                         existing = []
                     existing.append(entry)
-                    with manifest_path.open("w", encoding="utf-8") as f:
-                        json.dump(existing, f, ensure_ascii=False, indent=2)
+                    write_json_atomic(manifest_path, existing, ensure_ascii=False, indent=2, make_backup=False)
                 except Exception as e:
                     logger.debug("batch_manifest.json 書き込み失敗: %s", e)
 

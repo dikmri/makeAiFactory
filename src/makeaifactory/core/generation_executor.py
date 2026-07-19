@@ -47,6 +47,7 @@ from ..comfy.workflow_patcher import (
     patch_workflow,
 )
 from ..domain.errors import JobCancelledError, OutputNotFoundError
+from .atomic_json import write_json_atomic
 
 if TYPE_CHECKING:
     from ..comfy.api_client import ComfyApiClient
@@ -364,9 +365,11 @@ class GenerationExecutor:
             patched = apply_dev_overrides(patched, req.dev_overrides)
 
         # 4. workflow.json 保存 (Desktopのみ。queue投入前、既存の保存順序を踏襲)
+        # DAT-01: job_dirはジョブごとの専用ディレクトリ (outputs配下、ユーザーが
+        # 直接開く場所) で1回しか書かないため、".bak"が無駄に増えないよう
+        # make_backup=False にする。
         if req.save_workflow_json:
-            with (req.job_dir / "workflow.json").open("w", encoding="utf-8") as f:
-                json.dump(patched, f, ensure_ascii=False, indent=2)
+            write_json_atomic(req.job_dir / "workflow.json", patched, ensure_ascii=False, indent=2, make_backup=False)
 
         # 5. prompt投入
         _stage("queueing")

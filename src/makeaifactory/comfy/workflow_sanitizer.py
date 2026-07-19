@@ -11,6 +11,7 @@ from ..constants import (
     OUTPUT_VIDEO_NODE_ID,
     RESOLUTION_PICKER_NODE_ID,
 )
+from ..core.atomic_json import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +189,10 @@ def load_and_sanitize(
     sanitized = sanitize_workflow(source)
 
     output_template.parent.mkdir(parents=True, exist_ok=True)
-    with output_template.open("w", encoding="utf-8") as f:
-        json.dump(sanitized, f, ensure_ascii=False, indent=2)
+    # DAT-01: 書き込みをwrite_json_atomicへ置換 (途中終了で壊れたJSONが
+    # 残ることを防ぐ)。runtime_template.jsonは共有ファイル (呼び出しごとに
+    # 都度作り直されるものではない) のため、既定 (make_backup=True) のままでよい。
+    write_json_atomic(output_template, sanitized, ensure_ascii=False, indent=2)
     logger.info("runtime template保存: %s", output_template)
 
     if output_report:

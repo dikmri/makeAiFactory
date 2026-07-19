@@ -78,3 +78,22 @@ def test_atomic_replace_via_tmp():
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         assert data == {"ok": True, "values": [1, 2, 3]}
+
+
+def test_write_json_atomic_supports_list_payload():
+    """DAT-01: batch_manifest.json (画像ごとの記録を追記していく配列) は
+    トップレベルが dict ではなく list のJSONのため、write_json_atomic が
+    list をそのまま渡しても問題なく書き込めることを確認する
+    (app.py の _append_manifest はこの呼び方をする)。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "batch_manifest.json"
+
+        write_json_atomic(path, [{"a": 1}], ensure_ascii=False, indent=2, make_backup=False)
+        write_json_atomic(path, [{"a": 1}, {"a": 2}], ensure_ascii=False, indent=2, make_backup=False)
+
+        result = read_json_or_default(path, None)
+        assert result == [{"a": 1}, {"a": 2}]
+
+        # 出力フォルダに.bakが増えないよう make_backup=False にしている
+        backup_path = path.with_suffix(path.suffix + ".bak")
+        assert not backup_path.exists()
