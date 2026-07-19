@@ -31,7 +31,7 @@ from ..i18n import tr
 from .auth import AuthManager
 from .rate_limiter import RateLimiter
 from .room_config import RemoteRoomConfig
-from .room_server import RemoteJob, RoomServer, find_free_port
+from .room_server import RemoteJob, RoomServer, cookie_max_age, find_free_port
 from .tunnel_manager import TunnelManager
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,15 @@ class RemoteRoomSignals(QObject):
 def _generate_pin() -> str:
     # 総当たり耐性のため暗号学的乱数で生成する
     return f"{secrets.randbelow(1000000):06d}"
+
+
+def ttl_watcher_needed(room_ttl_minutes: int) -> bool:
+    """TTL監視タスクを起動する必要があるかを判定する純関数。
+
+    RLC-01 (1): room_ttl_minutes <= 0 は「無期限」を意味し、TTL監視タスク
+    自体を作らない。常駐させたいローカルブリッジ(owner="bridge")向け。
+    """
+    return room_ttl_minutes > 0
 
 
 class RemoteRoomController:
@@ -81,6 +90,7 @@ class RemoteRoomController:
         self._stop_event: asyncio.Event | None = None
         self._config: RemoteRoomConfig | None = None
         self._pin: str = ""
+        self._public_url: str | None = None  # RLC-01 (6): ダイアログ再同期用に現在の公開URLを保持
         self._ip_salt = secrets.token_hex(16)
         # サーバーとコントローラで共有するジョブ辞書とキュー（同一asyncioループ内）
         self._jobs: dict[str, RemoteJob] = {}
@@ -99,11 +109,21 @@ class RemoteRoomController:
     def pin(self) -> str:
         return self._pin
 
+    @property
+    def public_url(self) -> str | None:
+        """現在公開中のURL (トンネル未確立/ローカルブリッジ等では None)。
+
+        RLC-01 (6): 稼働中にダイアログを閉じて再度開いた際、新しいダイアログへ
+        現在の状態を反映するために公開する。
+        """
+        return self._public_url
+
     def start(self, config: RemoteRoomConfig) -> None:
         if self.is_running:
             return
         self._config = config
         self._pin = _generate_pin() if config.require_pin else ""
+        self._public_url = None
         self._jobs.clear()
         self._accepting[0] = True
         self._running = True
@@ -209,10 +229,13 @@ class RemoteRoomController:
         config._job_base_dir = str(job_base_dir)  # type: ignore[attr-defined]
 
         # 認証マネージャとレートリミッタ
+        # RLC-01 (1): room_ttl_minutes<=0(無期限ルーム)でも AuthManager の
+        # セッションTTLを0にはしない。0のままだと cleanup_expired が全セッションを
+        # 即座に期限切れ扱いしてしまう (Cookie の max_age と同じ考え方で24時間を使う)。
         auth = AuthManager(
             pin=self._pin,
             require_pin=config.require_pin,
-            ttl_seconds=config.room_ttl_minutes * 60,
+            ttl_seconds=cookie_max_age(config.room_ttl_minutes),
         )
         limiter = RateLimiter(cooldown_seconds=config.per_session_cooldown_seconds)
 
@@ -286,6 +309,7 @@ class RemoteRoomController:
             public_url: str | None = None
             try:
                 public_url = await tunnel.start(port, exe_path=cloudflared_exe)
+                self._public_url = public_url
                 self._signals.public_url_ready.emit(public_url, self._pin)
                 self._signals.status_changed.emit("running", tr("公開中: {public_url}").format(public_url=public_url))
                 logger.info("投入口 公開: %s (PIN: %s)", public_url, "あり" if self._pin else "なし")
@@ -296,29 +320,41 @@ class RemoteRoomController:
                 )
                 self._signals.status_changed.emit("error", tr("Tunnel 起動タイムアウト"))
                 self._signals.error.emit(err)
+                # RLC-01 (2): tunnel_manager.start() 自体が失敗時に自己クリーンアップ
+                # するが、万一プロセスが残っていた場合の防御的な後始末 (stop()は冪等)。
+                await tunnel.stop()
                 await server.stop()
                 return
             except Exception as e:
                 self._signals.status_changed.emit("error", tr("Tunnel エラー: {e}").format(e=e))
                 self._signals.error.emit(str(e))
+                await tunnel.stop()
                 await server.stop()
                 return
 
         # ジョブワーカー + TTL 監視
         worker_task = asyncio.create_task(self._job_worker())
-        ttl_task = asyncio.create_task(self._ttl_watcher(config.room_ttl_minutes))
+        # RLC-01 (1): room_ttl_minutes <= 0 は「無期限」。常駐させたいローカル
+        # ブリッジ(owner="bridge")が既定TTL(180分)で突然停止しないよう、
+        # 無期限指定時はTTL監視タスク自体を作らない。
+        ttl_task = (
+            asyncio.create_task(self._ttl_watcher(config.room_ttl_minutes))
+            if ttl_watcher_needed(config.room_ttl_minutes) else None
+        )
 
         # 停止シグナル待機
         await self._stop_event.wait()
 
         logger.info("RemoteRoom 停止シーケンス開始")
         worker_task.cancel()
-        ttl_task.cancel()
+        if ttl_task is not None:
+            ttl_task.cancel()
         self._accepting[0] = False
 
         if tunnel is not None:
             await tunnel.stop()
         await server.stop()
+        self._public_url = None
 
         # 出力ファイルの保持期間を考慮 (入力画像のみ即時削除)
         self._cleanup_inputs()

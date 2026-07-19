@@ -67,7 +67,7 @@ from .gui.main_window import MainWindow
 from .gui.remote_room_dialog import RemoteRoomDialog, make_qr_pixmap
 from .gui.local_bridge_dialog import LocalBridgeDialog
 from .remote_room.controller import RemoteRoomController
-from .remote_room.room_config import RemoteRoomConfig
+from .remote_room.room_config import RemoteRoomConfig, build_qr_url
 
 logger = logging.getLogger(__name__)
 
@@ -799,9 +799,20 @@ def run_app() -> int:
 
     @Slot(str, str)
     def _on_remote_url_ready(url: str, pin: str) -> None:
-        """URL 公開時にメインウィンドウの drop ページへ QR を表示する。"""
-        qr_url = f"{url}?pin={pin}" if pin else url
-        hint = tr("📱 スキャンで入室 (PIN自動入力)") if pin else tr("📱 スキャンして入室")
+        """URL 公開時にメインウィンドウの drop ページへ QR を表示する。
+
+        RLC-01 (5): QRにPINを埋め込むかは settings.remote_room_config の
+        qr_include_pin (既定True=現状維持) で切り替える。OFFの場合もPIN自体は
+        引き続き必須のままなので、その旨をヒント文言で案内する。
+        """
+        include_pin = bool(settings.remote_room_config.get("qr_include_pin", True))
+        qr_url = build_qr_url(url, pin, include_pin)
+        if not pin:
+            hint = tr("📱 スキャンして入室")
+        elif include_pin:
+            hint = tr("📱 スキャンで入室 (PIN自動入力)")
+        else:
+            hint = tr("📱 スキャンしてPINを入力")
         pixmap = make_qr_pixmap(qr_url, 160)
         if pixmap:
             window.show_remote_room_qr(pixmap, hint)
@@ -816,6 +827,11 @@ def run_app() -> int:
     def _on_remote_room_requested() -> None:
         dlg = _remote_room.get("dlg")
         if dlg is None or not dlg.isVisible():
+            # RLC-01 (6): 稼働中にダイアログを閉じて再度開くと、close()だけでは
+            # ダイアログは破棄されない(Qtの親子関係で残存)ため、ここで新しい
+            # ダイアログを作る前に旧ダイアログを退避しておく。
+            old_dlg = dlg
+            room_ctrl = _remote_room.get("ctrl")
             dlg = RemoteRoomDialog(window)
             _remote_room["dlg"] = dlg
 
@@ -856,6 +872,39 @@ def run_app() -> int:
             dlg.stop_accepting.connect(lambda: _remote_room["ctrl"].stop_accepting() if _remote_room["ctrl"] else None)
             dlg.cancel_job.connect(lambda: _remote_room["ctrl"].cancel_current_job() if _remote_room["ctrl"] else None)
             dlg.clear_queue.connect(lambda: _remote_room["ctrl"].clear_queue() if _remote_room["ctrl"] else None)
+
+            if room_ctrl is not None and room_ctrl.is_running:
+                # 投入口が稼働したままダイアログだけ閉じ→再度開かれたケース。
+                # 新ダイアログへシグナルを繋ぎ直し、現在の状態を反映する。
+                sig = room_ctrl.signals
+                if old_dlg is not None:
+                    # 旧ダイアログへの接続はQueuedConnectionのまま残り続けるため
+                    # 明示的に切ってから破棄する(close()だけではdlgは破棄されない)。
+                    for signal, slot in (
+                        (sig.status_changed, old_dlg.update_status),
+                        (sig.public_url_ready, old_dlg.set_public_url),
+                        (sig.stats_changed, old_dlg.update_stats),
+                        (sig.error, old_dlg.show_error_msg),
+                    ):
+                        try:
+                            signal.disconnect(slot)
+                        except (RuntimeError, TypeError):
+                            pass
+                sig.status_changed.connect(dlg.update_status,    Qt.ConnectionType.QueuedConnection)
+                sig.public_url_ready.connect(dlg.set_public_url, Qt.ConnectionType.QueuedConnection)
+                sig.stats_changed.connect(dlg.update_stats,      Qt.ConnectionType.QueuedConnection)
+                sig.error.connect(dlg.show_error_msg,            Qt.ConnectionType.QueuedConnection)
+                # 取得できる範囲(ステータス/統計/URL・PIN)で現在の状態を反映する。
+                # URLはトンネル確立後にしか判明しないため、未確立中は「稼働中」表示のみ。
+                if room_ctrl.public_url:
+                    dlg.update_status("running", tr("公開中: {public_url}").format(public_url=room_ctrl.public_url))
+                    dlg.set_public_url(room_ctrl.public_url, room_ctrl.pin)
+                else:
+                    dlg.update_status("running", tr("稼働中"))
+                dlg.update_stats(room_ctrl.get_stats())
+
+            if old_dlg is not None:
+                old_dlg.deleteLater()
 
         dlg.show()
         dlg.raise_()

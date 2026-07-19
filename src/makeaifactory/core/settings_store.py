@@ -39,6 +39,7 @@ _DEFAULTS = {
         "max_queue_size": 3,
         "per_session_cooldown_seconds": 600,
         "output_retention_hours": 24,
+        "qr_include_pin": True,  # RLC-01 (5): QRコードにPINを埋め込むか (既定は現状維持でTrue)
     },
     "local_bridge": {                # ブラウザ連携(Tampermonkey)
         "enabled": False,            # ローカルブリッジサーバーを起動するか

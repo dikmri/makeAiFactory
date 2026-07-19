@@ -9,6 +9,7 @@ from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..i18n import tr
+from ..remote_room.room_config import build_qr_url
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +231,13 @@ class RemoteRoomDialog(QDialog):
         self._pin_combo.addItem(tr("QR のみ"), False)
         config_layout.addRow(tr("認証:"), self._pin_combo)
 
+        # RLC-01 (5): 既定はPIN込みQR(現状維持)。外すとQRを読み取っただけでは
+        # 入室できず、表示されたPINを別途入力する必要がある(総当たり耐性のため
+        # PIN自体は無くさない)。
+        self._qr_pin_checkbox = QCheckBox(tr("QRコードにPINを含める(読み取るだけで入室可)"))
+        self._qr_pin_checkbox.setChecked(True)
+        config_layout.addRow(tr("QRコード:"), self._qr_pin_checkbox)
+
         self._queue_combo = QComboBox()
         for v in [1, 3, 5]:
             self._queue_combo.addItem(tr("{n}件").format(n=v), v)
@@ -331,6 +340,7 @@ class RemoteRoomDialog(QDialog):
         self._pin_combo.setEnabled(not active)
         self._queue_combo.setEnabled(not active)
         self._cooldown_combo.setEnabled(not active)
+        self._qr_pin_checkbox.setEnabled(not active)
         self._stop_accept_btn.setEnabled(is_running)
         self._cancel_job_btn.setEnabled(is_running)
         self._clear_queue_btn.setEnabled(is_running)
@@ -375,6 +385,7 @@ class RemoteRoomDialog(QDialog):
             "max_queue_size": self._queue_combo.currentData(),
             "per_session_cooldown_seconds": self._cooldown_combo.currentData(),
             "output_retention_hours": 24,
+            "qr_include_pin": self._qr_pin_checkbox.isChecked(),
         }
         if self._on_start_cb:
             self._on_start_cb(config)
@@ -411,12 +422,18 @@ class RemoteRoomDialog(QDialog):
 
     def _generate_qr(self, url: str) -> None:
         pin = getattr(self, "_public_pin", "")
-        qr_url = f"{url}?pin={pin}" if pin else url
+        include_pin = self._qr_pin_checkbox.isChecked()
+        qr_url = build_qr_url(url, pin, include_pin)
         pixmap = make_qr_pixmap(qr_url, 200)
         if pixmap:
             self._qr_label.setPixmap(pixmap)
             self._qr_label.show()
-            hint = tr("📱 スキャンで入室 (PIN 自動入力)") if pin else tr("📱 スキャンして入室")
+            if not pin:
+                hint = tr("📱 スキャンして入室")
+            elif include_pin:
+                hint = tr("📱 スキャンで入室 (PIN 自動入力)")
+            else:
+                hint = tr("📱 スキャンしてPINを入力")
             self._qr_hint_label.setText(hint)
             self._qr_hint_label.show()
         else:

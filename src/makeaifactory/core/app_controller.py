@@ -442,6 +442,9 @@ class AppController:
                 # (超過分は upload_validator がサーバー側で縮小する)
                 max_upload_mb=100,
                 max_image_px=8192,
+                # RLC-01 (1): ローカルブリッジは常駐前提のため無期限 (0以下=TTL監視なし)。
+                # 既定値(180分)のままだと3時間で突然停止してしまう。
+                room_ttl_minutes=0,
             )
             self._local_bridge.start(cfg)
             logger.info("ローカルブリッジ起動: port=%d", LOCAL_BRIDGE_PORT)
