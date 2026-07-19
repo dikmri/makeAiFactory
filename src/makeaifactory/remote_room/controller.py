@@ -26,6 +26,7 @@ from ..core.generation_executor import GenerationExecutor, GenerationRequest, lo
 from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
+from ..domain.errors import JobCancelledError
 from ..i18n import tr
 from .auth import AuthManager
 from .rate_limiter import RateLimiter
@@ -59,6 +60,7 @@ class RemoteRoomController:
         paths: AppPaths,
         gate: GenerationGate | None = None,
         owner: str = "remote",
+        executor: GenerationExecutor | None = None,
     ) -> None:
         self._settings = settings
         self._paths = paths
@@ -68,14 +70,15 @@ class RemoteRoomController:
         # インターネット投入口 (owner="remote") とローカルブリッジ (owner="bridge") は
         # 同じ RemoteRoomController 実装を使い回すため、gate上のowner名で区別する。
         self._owner = owner
-        # SCH-01 PR3: 3経路共通の生成実行本体。生成フロー自体はここに委譲する。
-        self._executor = GenerationExecutor(paths)
+        # SCH-01 PR4: gate取得(submit)〜release、request_cancelによる照合キャンセルまで
+        # 一括で担う共有executor。app.py/AppController から共有インスタンスを受け取るのが
+        # 通常経路。未指定 (単体テスト等) の場合は上のgateと組にした自前のexecutorを持つ。
+        self._executor = executor if executor is not None else GenerationExecutor(paths, self._gate)
         self._signals = RemoteRoomSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._stop_event: asyncio.Event | None = None
-        self._current_comfy_client: ComfyApiClient | None = None
         self._config: RemoteRoomConfig | None = None
         self._pin: str = ""
         self._ip_salt = secrets.token_hex(16)
@@ -115,10 +118,13 @@ class RemoteRoomController:
         self._accepting[0] = False
         if self._loop and self._stop_event:
             self._loop.call_soon_threadsafe(self._stop_event.set)
-        if self._loop and self._current_comfy_client:
-            asyncio.run_coroutine_threadsafe(
-                self._current_comfy_client.interrupt(), self._loop
-            )
+        # SCH-01 PR4: 実行中ジョブも止める。executor.request_cancel は
+        # 実行中レジストリと owner=self._owner を照合できた時だけ interrupt を
+        # 発行するため、他経路のジョブ実行中に誤って止めてしまうことがない
+        # (従来の self._current_comfy_client.interrupt() 無条件発行を置き換え)。
+        # request_cancel はどのスレッドからでも呼べるため、専用スレッドの
+        # イベントループ (self._loop) 経由にする必要はない。
+        self._executor.request_cancel(self._owner)
         logger.info("RemoteRoomController 停止要求")
 
     def stop_accepting(self) -> None:
@@ -126,10 +132,12 @@ class RemoteRoomController:
         self._accepting[0] = False
 
     def cancel_current_job(self) -> None:
-        if self._loop and self._current_comfy_client:
-            asyncio.run_coroutine_threadsafe(
-                self._current_comfy_client.interrupt(), self._loop
-            )
+        """現在実行中の ComfyUI ジョブをキャンセルする。
+
+        SCH-01 PR4: owner=self._owner のジョブが実際に実行中の時だけ
+        executor.request_cancel が interrupt を発行する (誤爆防止)。
+        """
+        self._executor.request_cancel(self._owner)
 
     def clear_queue(self) -> None:
         """キュー内の待機ジョブをすべてキャンセルする。"""
@@ -364,19 +372,10 @@ class RemoteRoomController:
             self._emit_stats()
             return
 
-        # デキュー済みだが実際の生成開始前にgateを取得する。取得待ち中に
-        # キャンセルされた (ジョブ自体がcancelled化、あるいはコントローラ停止) 場合は
-        # 待たずに終了する。
-        lease = await self._gate.wait_acquire(
-            self._owner, cancel_check=lambda: job.status == "cancelled" or not self._running,
-        )
-        if lease is None:
-            job.status = "cancelled"
-            job.completed_at = datetime.now()
-            job.error_message = "生成待機中にキャンセルされました。"
-            self._emit_stats()
-            return
-
+        # SCH-01 PR4: gate取得(wait_acquire)〜release は _generate_video 内の
+        # executor.submit() へ集約した (以前はここで個別にwait_acquire/releaseして
+        # いた)。取得待ち中・生成中いずれのキャンセルもJobCancelledErrorとして
+        # 届くため、下のexcept節で統一的に「cancelled」状態として扱う。
         job.status = "running"
         job.progress_label = "生成準備中"
         self._signals.job_started.emit(job.job_id, job.image_path)
@@ -397,6 +396,15 @@ class RemoteRoomController:
             self._signals.job_done.emit(job.job_id, str(output_path))
             self._emit_stats()
             logger.info("RemoteRoom ジョブ完了: %s → %s", job.job_id, output_path)
+        except JobCancelledError:
+            # gate取得待ち中・生成中いずれのキャンセルもここに合流する。
+            # _job_worker側の汎用except Exceptionでfailed扱いに上書きされない
+            # よう、ここで完結させ再送出しない。
+            job.status = "cancelled"
+            job.completed_at = datetime.now()
+            job.error_message = "生成がキャンセルされました。"
+            self._emit_stats()
+            logger.info("RemoteRoom ジョブキャンセル: %s", job.job_id)
         except Exception as e:
             job.status = "failed"
             job.completed_at = datetime.now()
@@ -404,8 +412,6 @@ class RemoteRoomController:
             self._signals.job_error.emit(job.job_id, str(e))
             self._emit_stats()
             raise
-        finally:
-            self._gate.release(lease)
 
     def _on_job_progress(self, job: RemoteJob, pct: float, label: str) -> None:
         job.progress_pct = pct
@@ -436,7 +442,6 @@ class RemoteRoomController:
 
         job_dir = Path(job.image_path).parent
         client = self._make_client(comfy_port)
-        self._current_comfy_client = client
 
         seed = random.randint(0, 2**32 - 1)
         req = GenerationRequest(
@@ -473,22 +478,25 @@ class RemoteRoomController:
                 pct = 10.0 + stage_pct * 0.80
                 on_progress(pct, tr("生成中... {pct}%").format(pct=int(pct)))
 
-        try:
-            result = await self._executor.run(req, client, on_stage=_on_stage, on_event=_on_event)
+        # SCH-01 PR4: gate取得(wait_acquire)〜release をここへ集約する (submit()。
+        # 以前は_process_job側で個別にwait_acquire/releaseしていた)。cancel_check は
+        # PR1相当 (job.status=="cancelled" またはコントローラ停止) をそのまま渡す。
+        result = await self._executor.submit(
+            req, client, on_stage=_on_stage, on_event=_on_event,
+            cancel_check=lambda: job.status == "cancelled" or not self._running,
+        )
 
-            final_output = result.output_path
-            with (job_dir / "job.json").open("w", encoding="utf-8") as f:
-                json.dump({
-                    "job_id": job.job_id,
-                    "status": "completed",
-                    "created_at": job.created_at.isoformat(),
-                    "completed_at": datetime.now().isoformat(),
-                }, f, ensure_ascii=False, indent=2)
+        final_output = result.output_path
+        with (job_dir / "job.json").open("w", encoding="utf-8") as f:
+            json.dump({
+                "job_id": job.job_id,
+                "status": "completed",
+                "created_at": job.created_at.isoformat(),
+                "completed_at": datetime.now().isoformat(),
+            }, f, ensure_ascii=False, indent=2)
 
-            on_progress(100.0, tr("完了"))
-            return final_output
-        finally:
-            self._current_comfy_client = None
+        on_progress(100.0, tr("完了"))
+        return final_output
 
     # ── TTL 監視 ──────────────────────────────────────────────────────────────
 

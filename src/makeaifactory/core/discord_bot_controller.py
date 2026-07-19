@@ -130,7 +130,13 @@ class DiscordBotSignals(QObject):
 
 
 class DiscordBotController:
-    def __init__(self, settings: SettingsStore, paths: AppPaths, gate: GenerationGate | None = None) -> None:
+    def __init__(
+        self,
+        settings: SettingsStore,
+        paths: AppPaths,
+        gate: GenerationGate | None = None,
+        executor: GenerationExecutor | None = None,
+    ) -> None:
         self._settings = settings
         self._paths = paths
         # 生成admissionゲート。app.py から共有インスタンスを受け取るのが通常経路。
@@ -138,13 +144,14 @@ class DiscordBotController:
         # (スタンドアロン discord_bot.py はこのクラスを使わず bot_state.json を
         # 直接読むだけなので、この分岐の有無に影響されない)。
         self._gate = gate if gate is not None else GenerationGate(None)
-        # SCH-01 PR3: 3経路共通の生成実行本体。生成フロー自体はここに委譲する。
-        self._executor = GenerationExecutor(paths)
+        # SCH-01 PR4: gate取得(submit)〜release、request_cancelによる照合キャンセルまで
+        # 一括で担う共有executor。app.py から共有インスタンスを受け取るのが通常経路。
+        # 未指定 (単体テスト等) の場合は上のgateと組にした自前のexecutorを持つ。
+        self._executor = executor if executor is not None else GenerationExecutor(paths, self._gate)
         self._signals = DiscordBotSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._discord_client = None          # discord.Client (set in bot thread)
-        self._current_comfy_client: ComfyApiClient | None = None
         self._cancel_requested = threading.Event()
         self._running = False
         # 割り込み生成用: バッチ中に Discord リクエストが来たことを示す threading.Event
@@ -216,18 +223,26 @@ class DiscordBotController:
     def stop(self) -> None:
         self._running = False
         self._cancel_requested.set()
-        if self._loop and self._current_comfy_client:
-            asyncio.run_coroutine_threadsafe(self._current_comfy_client.interrupt(), self._loop)
+        # SCH-01 PR4: 実行中ジョブも止める。executor.request_cancel は
+        # 実行中レジストリと owner="discord" を照合できた時だけ interrupt を
+        # 発行するため、他経路のジョブ実行中に誤って止めてしまうことがない
+        # (従来の self._current_comfy_client.interrupt() 無条件発行を置き換え)。
+        # request_cancel はどのスレッドからでも呼べるため、Botスレッドの
+        # イベントループ (self._loop) 経由にする必要はない。
+        self._executor.request_cancel("discord")
         if self._loop and self._discord_client is not None:
             asyncio.run_coroutine_threadsafe(self._discord_client.close(), self._loop)
         self._signals.status_changed.emit("stopped", tr("停止"))
         logger.info("Discord Bot 停止要求")
 
     def cancel_current_job(self) -> None:
-        """現在実行中の ComfyUI ジョブをキャンセルする。"""
+        """現在実行中の ComfyUI ジョブをキャンセルする。
+
+        SCH-01 PR4: owner="discord" のジョブが実際に実行中の時だけ
+        executor.request_cancel が interrupt を発行する (誤爆防止)。
+        """
         self._cancel_requested.set()
-        if self._loop and self._current_comfy_client:
-            asyncio.run_coroutine_threadsafe(self._current_comfy_client.interrupt(), self._loop)
+        self._executor.request_cancel("discord")
         logger.info("Discord ジョブキャンセル要求")
 
     # ── スレッドエントリポイント ───────────────────────────────────────────────
@@ -481,25 +496,18 @@ class DiscordBotController:
                 # 通常モードは即座に表示 (他の画像と競合しないため早期表示で問題ない)
                 _emit_started()
 
-            # 実際の生成 (ComfyUIへのqueue_prompt) 直前でgateを取得する。取れなければ
-            # (待機中にBotが停止された等でキャンセル扱いになった場合) は既存の
-            # _CancelledError系フローに合流させる。
-            lease = await self._gate.wait_acquire(
-                "discord", cancel_check=self._cancel_requested.is_set,
-            )
-            if lease is None:
-                raise _CancelledError()
-
+            # SCH-01 PR4: gate取得(wait_acquire)〜release は _generate_video 内の
+            # executor.submit() へ集約した。取得待ち中にキャンセルされた場合
+            # (待機中にBotが停止された等) は submit() が送出する JobCancelledError を
+            # _generate_video 側で _CancelledError に変換して、既存の
+            # _CancelledError系フローにそのまま合流させる。
             gen_start = _time.monotonic()
-            try:
-                # 割り込みの場合、実際に ComfyUI が生成を開始するまでプレビュー切替を遅らせる
-                # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
-                output_path = await self._generate_video(
-                    image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
-                    workflow=workflow,
-                )
-            finally:
-                self._gate.release(lease)
+            # 割り込みの場合、実際に ComfyUI が生成を開始するまでプレビュー切替を遅らせる
+            # (前の画像がまだ生成中のうちにプレビューが切り替わってしまうのを防ぐ)
+            output_path = await self._generate_video(
+                image_path, comfy_port, on_started=None if not is_interrupt else _emit_started,
+                workflow=workflow,
+            )
             _emit_started()  # フォールバック: execution_start を観測できなかった場合も必ず発火
             elapsed = _time.monotonic() - gen_start
 
@@ -553,7 +561,6 @@ class DiscordBotController:
         shutil.copy2(image_path, input_copy)
 
         client = self._make_client(comfy_port)
-        self._current_comfy_client = client
 
         seed = random.randint(0, 2**32 - 1)
         req = GenerationRequest(
@@ -584,20 +591,20 @@ class DiscordBotController:
                 pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
                 self._signals.job_progress.emit(pct, tr("生成中... {pct}%").format(pct=int(pct)))
 
+        logger.info("ComfyUI 接続確認: port=%d", comfy_port)
         try:
-            logger.info("ComfyUI 接続確認: port=%d", comfy_port)
-            try:
-                result = await self._executor.run(
-                    req, client,
-                    on_stage=_on_stage,
-                    on_event=_on_event,
-                    cancel_check=self._cancel_requested.is_set,
-                )
-            except JobCancelledError as e:
-                # 既存挙動を維持: Discord経路のキャンセルは_CancelledErrorで表現する
-                raise _CancelledError() from e
+            # SCH-01 PR4: gate取得(wait_acquire)〜release をここへ集約する
+            # (submit()。以前は_process側で個別にwait_acquire/releaseしていた)。
+            # 取得待ち中・生成中いずれのキャンセルもJobCancelledErrorとして届く。
+            result = await self._executor.submit(
+                req, client,
+                on_stage=_on_stage,
+                on_event=_on_event,
+                cancel_check=self._cancel_requested.is_set,
+            )
+        except JobCancelledError as e:
+            # 既存挙動を維持: Discord経路のキャンセルは_CancelledErrorで表現する
+            raise _CancelledError() from e
 
-            logger.info("生成完了: %s → %s", job_id, result.output_path)
-            return result.output_path
-        finally:
-            self._current_comfy_client = None
+        logger.info("生成完了: %s → %s", job_id, result.output_path)
+        return result.output_path

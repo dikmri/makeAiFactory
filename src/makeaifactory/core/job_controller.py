@@ -35,6 +35,7 @@ class JobController:
         server: ComfyServerController,
         settings: SettingsStore,
         template: dict,
+        executor: GenerationExecutor,
         gpu_info: "GpuInfo | None" = None,
         ram_total_gb: float = 0.0,
         sage_attention_mode: str = "",
@@ -49,9 +50,12 @@ class JobController:
         self._sage_attention_mode = sage_attention_mode or "disabled"
         self._sage_attention_available = sage_attention_available
         self._current_job: Job | None = None
-        self._client: ComfyApiClient | None = None
-        # SCH-01 PR3: 3経路共通の生成実行本体。生成フロー自体はここに委譲する。
-        self._executor = GenerationExecutor(paths)
+        # 現在実行中(直近に開始した)ジョブのowner。cancel_current()がexecutor.
+        # request_cancel(owner, job_id)で照合するために保持する。
+        self._current_owner: str = "desktop"
+        # SCH-01 PR4: gate取得(submit)〜release、request_cancelによる照合キャンセルまで
+        # 一括で担う共有executor。app.py/AppControllerから配布される単一インスタンス。
+        self._executor = executor
 
     def reload_template(self) -> None:
         """workflow templateをディスクから再読み込みする。
@@ -67,10 +71,13 @@ class JobController:
         input_image: Path,
         on_progress: ProgressCallback | None = None,
         dev_overrides: DevModeOverrides | None = None,
+        owner: str = "desktop",
+        on_wait: Callable[[], None] | None = None,
     ) -> tuple[Path, BenchmarkResult]:
         job = Job()
         self._current_job = job
-        logger.info("Job開始: %s", job.job_id)
+        self._current_owner = owner
+        logger.info("Job開始: %s (owner=%s)", job.job_id, owner)
         start_time = time.monotonic()
 
         job_dir = self._paths.job_dir(job.job_id, job.date_str)
@@ -87,7 +94,6 @@ class JobController:
             self._server.start()
 
         client = ComfyApiClient(self._server.base_url)
-        self._client = client
 
         # シード決定 (dev mode: オーバーライドが持つ。通常: 設定次第でランダム)
         if dev_overrides is not None:
@@ -100,7 +106,7 @@ class JobController:
         preset_def = MODEL_PRESETS.get(self._settings.model_preset, MODEL_PRESETS["normal"])
 
         req = GenerationRequest(
-            owner="desktop",
+            owner=owner,
             job_id=job.job_id,
             input_image=input_image,
             job_dir=job_dir,
@@ -140,6 +146,9 @@ class JobController:
         # 計測していたが、SCH-01 PR3の統合によりexecutor.run()全体
         # (接続確認〜アップロード〜監視〜出力解決) を計測窓とする
         # (計測窓がアップロード/出力解決分だけ広がるのは計画上の既知差分として許容する)。
+        # SCH-01 PR4: run()をsubmit()に置き換えたことで、gate取得待ち
+        # (=他経路の生成完了待ち) が発生した場合はその待機時間も計測窓・elapsed_sec
+        # に含まれるようになる (待たされない通常時は従来と同じ)。これも既知差分として許容する。
         async with VramMonitor() as vram, RamMonitor(total_gb=self._ram_total_gb) as ram:
             tracker = ProgressTracker(
                 on_progress=on_progress,
@@ -147,11 +156,12 @@ class JobController:
                 stage_count=count_progress_stages(self._template),
             )
             try:
-                result = await self._executor.run(
+                result = await self._executor.submit(
                     req, client,
                     on_stage=_on_stage,
                     on_event=tracker.handle_event,
                     cancel_check=lambda: job.status == JobState.CANCELLED,
+                    on_wait=on_wait,
                 )
             except OutputNotFoundError as e:
                 # 既存挙動を維持: 失敗時もhistory.jsonを保存してからraiseする
@@ -274,10 +284,20 @@ class JobController:
             logger.warning("ベンチマークCSV書き込み失敗: %s", exc)
 
     async def cancel_current(self) -> None:
-        if self._client:
-            await self._client.interrupt()
+        """現在実行中のジョブをキャンセルする。
+
+        SCH-01 PR4: ComfyUIへの `/interrupt` はグローバルに効く (実行中の
+        ジョブなら誰のものでも止めてしまう) ため、無条件発行はやめ、
+        executor.request_cancel(owner, job_id) による registry 照合
+        (自分のジョブが実際に実行中の時だけ発行) へ置き換える。
+        job.status=CANCELLED は submit()/run() のcancel_check
+        (取得待ち中・watch後いずれも) が拾うため、request_cancelが不一致で
+        interruptを発行しなかった場合でも、次にgateが空いた時点でこのジョブは
+        キャンセル済みとして扱われる。
+        """
         if self._current_job:
             self._current_job.status = JobState.CANCELLED
+            self._executor.request_cancel(self._current_owner, self._current_job.job_id)
 
 
 def _notify(cb: ProgressCallback | None, progress: JobProgress) -> None:
