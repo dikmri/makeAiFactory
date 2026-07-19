@@ -994,12 +994,15 @@ def run_app() -> int:
                 return tr("必須ノード (画像入力/動画出力) が含まれていないため適用できません")
 
             try:
+                # runtime側 (workflow_runtime_dir) は通常 ensure_dirs()/setup() で
+                # 既に作成済みだが、念のため防御的に作成しておく。
+                paths.api_source_json().parent.mkdir(parents=True, exist_ok=True)
                 with paths.api_source_json().open("w", encoding="utf-8") as f:
                     json.dump(source, f, ensure_ascii=False, indent=2)
                 with paths.runtime_template_json().open("w", encoding="utf-8") as f:
                     json.dump(sanitized, f, ensure_ascii=False, indent=2)
                 report = generate_analysis_report(source, sanitized)
-                with (paths.workflow_dir / "workflow_analysis_report.md").open("w", encoding="utf-8") as f:
+                with paths.workflow_analysis_report_md().open("w", encoding="utf-8") as f:
                     f.write(report)
             except Exception as e:
                 return tr("保存に失敗しました: {e}").format(e=e)

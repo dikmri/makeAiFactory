@@ -50,6 +50,53 @@ SetupCallback = Callable[[SetupProgress], None]
 JobProgressCallback = Callable[[JobProgress], None]
 
 
+def ensure_workflow_runtime(paths: AppPaths, active_workflow: str) -> None:
+    """runtime側のapi_source (paths.api_source_json()) が無ければ初期生成する。
+
+    RES-01: サニタイズ派生物 (api_source/runtime_template/report) の書き込み先を
+    bundled側 (app/workflow, 読み取り専用リソースの想定) から runtime_root配下
+    (workflow_runtime_dir) へ分離したことに伴う初回生成・移行処理。
+
+    優先順位:
+    1. 旧配置 (bundled workflow_dir 直下の makeAiFactory_api_source.json) が
+       存在すればそれをコピーする。本PR適用前の環境からの移行や、旧配置に
+       ユーザーが直接手を入れていた場合の引き継ぎのため。
+    2. presets/<active_workflow>.json があればそれをコピーする。
+    3. 上記が無ければ presets/default.json をコピーする。
+
+    runtime側に既にapi_sourceが存在する場合は何もしない (上書きしない)。
+    """
+    dest = paths.api_source_json()
+    if dest.exists():
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    legacy = paths.workflow_dir / "makeAiFactory_api_source.json"
+    if legacy.exists():
+        dest.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
+        logger.info("workflow runtime初期化: 旧配置(bundled)から引き継ぎ (%s)", legacy)
+        return
+
+    from ..constants import DEFAULT_WORKFLOW, WORKFLOW_PRESETS
+
+    info = WORKFLOW_PRESETS.get(active_workflow)
+    if info is not None:
+        src = paths.workflow_preset_json(info["source"])
+        if src.exists():
+            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            logger.info("workflow runtime初期化: preset[%s]から生成 (%s)", active_workflow, src)
+            return
+
+    default_info = WORKFLOW_PRESETS[DEFAULT_WORKFLOW]
+    src = paths.workflow_preset_json(default_info["source"])
+    if src.exists():
+        dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        logger.info("workflow runtime初期化: default presetから生成 (%s)", src)
+    else:
+        logger.warning("workflow runtime初期化: default presetも見つかりません (%s)", src)
+
+
 class AppController:
     def __init__(
         self,
@@ -240,10 +287,11 @@ class AppController:
         check_required_models_present(paths.runtime_root, model_manifest, presets=installed)
 
         _progress(SetupState.BUILDING_WORKFLOW_TEMPLATE, tr("workflowを準備しています..."))
+        ensure_workflow_runtime(paths, self._settings.workflow)
         load_and_sanitize(
             paths.api_source_json(),
             paths.runtime_template_json(),
-            paths.workflow_dir / "workflow_analysis_report.md",
+            paths.workflow_analysis_report_md(),
         )
 
         _progress(SetupState.VALIDATING_COMFYUI, tr("ComfyUIを検証しています..."))
@@ -269,6 +317,19 @@ class AppController:
         if not self._state.is_ready:
             await self.setup(on_progress)
         else:
+            # RES-01: 本PR適用前から READY だった環境 (runtime_state.jsonはruntime_root
+            # に永続化されるためアプリ更新後も引き継がれる) では setup() が呼ばれず
+            # ensure_workflow_runtime / サニタイズも未実行のまま。既定(default)
+            # ワークフローの場合、app.py の起動時再適用 (_on_setup_ready) は default に
+            # 対しては apply_workflow_preset を呼ばないため、ここで生成しておかないと
+            # runtime側のapi_source/runtime_templateが永久に生成されない。
+            if not self._paths.runtime_template_json().exists():
+                ensure_workflow_runtime(self._paths, self._settings.workflow)
+                load_and_sanitize(
+                    self._paths.api_source_json(),
+                    self._paths.runtime_template_json(),
+                    self._paths.workflow_analysis_report_md(),
+                )
             # setup() を経由しないパス (再起動後など) でも system_info を確保する
             if self._system_info is None:
                 self._system_info = probe_system(self._paths.runtime_root)
@@ -312,7 +373,7 @@ class AppController:
         load_and_sanitize(
             api_path,
             self._paths.runtime_template_json(),
-            self._paths.workflow_dir / "workflow_analysis_report.md",
+            self._paths.workflow_analysis_report_md(),
         )
         self.reload_workflow_template()
         logger.info("ワークフロー切替: %s (%s)", workflow_id, info["source"])
