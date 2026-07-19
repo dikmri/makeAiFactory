@@ -61,5 +61,15 @@ class OutputNotFoundError(MakeAiFactoryError):
     pass
 
 
+class JobCancelledError(MakeAiFactoryError):
+    """SCH-01 PR3: GenerationExecutor.run の cancel_check が True を返した際に送出される。
+
+    MakeAiFactoryError を継承しているため、呼び出し側 (app.py 等) の既存の
+    `except MakeAiFactoryError` 分岐をそのまま使い回せる。Desktop経路が従来
+    投げていた `MakeAiFactoryError("生成がキャンセルされました")` と同等に扱われる。
+    """
+    pass
+
+
 class SetupError(MakeAiFactoryError):
     pass

@@ -11,7 +11,6 @@ import json
 import logging
 import random
 import secrets
-import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -21,10 +20,9 @@ from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
-from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
-from ..core.generation_executor import load_template_for_workflow, resolve_output_with_retry
+from ..core.generation_executor import GenerationExecutor, GenerationRequest, load_template_for_workflow
 from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
@@ -70,6 +68,8 @@ class RemoteRoomController:
         # インターネット投入口 (owner="remote") とローカルブリッジ (owner="bridge") は
         # 同じ RemoteRoomController 実装を使い回すため、gate上のowner名で区別する。
         self._owner = owner
+        # SCH-01 PR3: 3経路共通の生成実行本体。生成フロー自体はここに委譲する。
+        self._executor = GenerationExecutor(paths)
         self._signals = RemoteRoomSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -414,6 +414,11 @@ class RemoteRoomController:
 
     # ── ComfyUI 動画生成 (DiscordBotController._generate_video と同様の構造) ──
 
+    def _make_client(self, comfy_port: int) -> ComfyApiClient:
+        """ComfyApiClient を生成する。テストでの差し替え用に切り出したフック。"""
+        base_url = f"http://{COMFY_HOST}:{comfy_port}"
+        return ComfyApiClient(base_url)
+
     async def _generate_video(
         self,
         job: RemoteJob,
@@ -430,53 +435,48 @@ class RemoteRoomController:
         template = load_template_for_workflow(self._paths, job.workflow)
 
         job_dir = Path(job.image_path).parent
-        base_url = f"http://{COMFY_HOST}:{comfy_port}"
-        client = ComfyApiClient(base_url)
+        client = self._make_client(comfy_port)
         self._current_comfy_client = client
 
+        seed = random.randint(0, 2**32 - 1)
+        req = GenerationRequest(
+            owner=self._owner,
+            job_id=job.job_id,
+            input_image=Path(job.image_path),
+            job_dir=job_dir,
+            template=template,
+            seed=seed,
+            unet_high_name=preset_def["unet_high"],
+            unet_low_name=preset_def["unet_low"],
+            sage_attention_mode="disabled",
+            upload_basename=f"remote_{job.job_id}.png",
+            ready_timeout_sec=30,
+        )
+
+        stage_estimator = StageProgressEstimator(count_progress_stages(template))
+
+        def _on_stage(stage: str) -> None:
+            if stage == "connecting":
+                on_progress(0.0, tr("ComfyUI 接続中..."))
+            elif stage == "uploading":
+                on_progress(5.0, tr("画像アップロード中..."))
+            elif stage == "queueing":
+                on_progress(8.0, tr("生成キュー追加中..."))
+            elif stage == "generating":
+                on_progress(10.0, tr("生成中..."))
+            elif stage == "resolving":
+                on_progress(92.0, tr("動画を保存中..."))
+
+        def _on_event(event) -> None:
+            if event.event_type == "progress" and event.max_steps > 0:
+                stage_pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
+                pct = 10.0 + stage_pct * 0.80
+                on_progress(pct, tr("生成中... {pct}%").format(pct=int(pct)))
+
         try:
-            on_progress(0.0, tr("ComfyUI 接続中..."))
-            await client.wait_until_ready(timeout_sec=30)
+            result = await self._executor.run(req, client, on_stage=_on_stage, on_event=_on_event)
 
-            upload_src = job_dir / f"remote_{job.job_id}.png"
-            shutil.copy2(job.image_path, upload_src)
-            on_progress(5.0, tr("画像アップロード中..."))
-            uploaded_name = await client.upload_image(upload_src)
-
-            seed = random.randint(0, 2**32 - 1)
-            ctx = WorkflowPatchContext(
-                job_id=job.job_id,
-                uploaded_image_name=uploaded_name,
-                output_prefix=make_output_prefix(job.job_id),
-                seed=seed,
-                unet_high_name=preset_def["unet_high"],
-                unet_low_name=preset_def["unet_low"],
-                sage_attention_mode="disabled",
-            )
-            patched = patch_workflow(template, ctx)
-
-            on_progress(8.0, tr("生成キュー追加中..."))
-            prompt_id = await client.queue_prompt(patched)
-            logger.info("RemoteRoom 生成開始: job=%s prompt=%s", job.job_id, prompt_id)
-
-            on_progress(10.0, tr("生成中..."))
-            stage_estimator = StageProgressEstimator(count_progress_stages(template))
-            async for event in client.watch_progress(prompt_id):
-                if event.event_type == "progress" and event.max_steps > 0:
-                    stage_pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
-                    pct = 10.0 + stage_pct * 0.80
-                    on_progress(pct, tr("生成中... {pct}%").format(pct=int(pct)))
-
-            on_progress(92.0, tr("動画を保存中..."))
-
-            # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
-            output_mp4, _history = await resolve_output_with_retry(
-                client, prompt_id, self._paths.comfyui_output_dir, job.job_id,
-            )
-
-            final_output = job_dir / "output.mp4"
-            shutil.copy2(output_mp4, final_output)
-
+            final_output = result.output_path
             with (job_dir / "job.json").open("w", encoding="utf-8") as f:
                 json.dump({
                     "job_id": job.job_id,

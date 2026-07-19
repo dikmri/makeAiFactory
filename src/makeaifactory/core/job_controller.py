@@ -10,19 +10,13 @@ from typing import TYPE_CHECKING, Callable
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.progress_tracker import ProgressTracker, build_node_labels, count_progress_stages
-from ..comfy.workflow_patcher import (
-    DevModeOverrides,
-    WorkflowPatchContext,
-    apply_dev_overrides,
-    make_output_prefix,
-    patch_workflow,
-)
+from ..comfy.workflow_patcher import DevModeOverrides
 from ..comfy.server_controller import ComfyServerController
-from ..core.generation_executor import resolve_output_with_retry
+from ..core.generation_executor import GenerationExecutor, GenerationRequest
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
 from ..core.vram_monitor import RamMonitor, VramMonitor
-from ..domain.errors import MakeAiFactoryError, OutputNotFoundError
+from ..domain.errors import OutputNotFoundError
 from ..domain.job import Job
 from ..domain.progress import BenchmarkResult, JobProgress, JobState
 
@@ -56,6 +50,8 @@ class JobController:
         self._sage_attention_available = sage_attention_available
         self._current_job: Job | None = None
         self._client: ComfyApiClient | None = None
+        # SCH-01 PR3: 3経路共通の生成実行本体。生成フロー自体はここに委譲する。
+        self._executor = GenerationExecutor(paths)
 
     def reload_template(self) -> None:
         """workflow templateをディスクから再読み込みする。
@@ -80,7 +76,8 @@ class JobController:
         job_dir = self._paths.job_dir(job.job_id, job.date_str)
         job_dir.mkdir(parents=True, exist_ok=True)
 
-        # 入力画像をジョブディレクトリへコピー
+        # 入力画像をジョブディレクトリへコピー (アーカイブ用。ComfyUIへの
+        # アップロード用コピーはGenerationExecutorが別名 (makeaifactory_<job_id>) で行う)
         input_copy = job_dir / ("input" + input_image.suffix)
         shutil.copy2(input_image, input_copy)
         job.input_path = str(input_copy)
@@ -91,30 +88,23 @@ class JobController:
 
         client = ComfyApiClient(self._server.base_url)
         self._client = client
-        await client.wait_until_ready()
 
-        # 画像アップロード
-        job.status = JobState.UPLOADING
-        _notify(on_progress, JobProgress(state=JobState.UPLOADING, message="画像をアップロードしています..."))
-
-        upload_name = f"makeaifactory_{job.job_id}{input_image.suffix}"
-        renamed = job_dir / upload_name
-        shutil.copy2(input_image, renamed)
-        uploaded_name = await client.upload_image(renamed)
-        job.uploaded_image_name = uploaded_name
-
-        # workflow patch
+        # シード決定 (dev mode: オーバーライドが持つ。通常: 設定次第でランダム)
         if dev_overrides is not None:
-            # dev mode: シードはオーバーライドが持つ (None なら template のまま)
             seed = dev_overrides.seed
         else:
             seed = random.randint(0, 2**32 - 1) if self._settings.seed_randomize else None
+        job.seed = seed
+
         from ..constants import MODEL_PRESETS
         preset_def = MODEL_PRESETS.get(self._settings.model_preset, MODEL_PRESETS["normal"])
-        ctx = WorkflowPatchContext(
+
+        req = GenerationRequest(
+            owner="desktop",
             job_id=job.job_id,
-            uploaded_image_name=uploaded_name,
-            output_prefix=make_output_prefix(job.job_id),
+            input_image=input_image,
+            job_dir=job_dir,
+            template=self._template,
             seed=seed,
             unet_high_name=preset_def["unet_high"],
             unet_low_name=preset_def["unet_low"],
@@ -123,57 +113,56 @@ class JobController:
                 if self._sage_attention_available and self._settings.sage_attention_enabled
                 else "disabled"
             ),
+            upload_basename=f"makeaifactory_{job.job_id}{input_image.suffix}",
+            dev_overrides=dev_overrides,
+            save_workflow_json=True,
         )
-        patched = patch_workflow(self._template, ctx)
-        if dev_overrides is not None:
-            patched = apply_dev_overrides(patched, dev_overrides)
-        job.seed = seed
 
-        # workflow を保存
-        with (job_dir / "workflow.json").open("w", encoding="utf-8") as f:
-            json.dump(patched, f, ensure_ascii=False, indent=2)
+        def _save_history(h: dict) -> None:
+            with (job_dir / "history.json").open("w", encoding="utf-8") as f:
+                json.dump(h, f, ensure_ascii=False, indent=2)
 
-        # prompt 投入
-        job.status = JobState.QUEUED
-        _notify(on_progress, JobProgress(state=JobState.QUEUED, message="生成キューに追加しています..."))
-        prompt_id = await client.queue_prompt(patched)
-        job.prompt_id = prompt_id
+        def _on_stage(stage: str) -> None:
+            # "connecting"/"generating" は既存実装でも追加のJobProgress通知が
+            # 無かった段階のためここでは何もしない
+            # (generatingの進捗はProgressTracker.handle_eventがon_event経由で担う)
+            if stage == "uploading":
+                job.status = JobState.UPLOADING
+                _notify(on_progress, JobProgress(state=JobState.UPLOADING, message="画像をアップロードしています..."))
+            elif stage == "queueing":
+                job.status = JobState.QUEUED
+                _notify(on_progress, JobProgress(state=JobState.QUEUED, message="生成キューに追加しています..."))
+            elif stage == "resolving":
+                job.status = JobState.RESOLVING_OUTPUT
+                _notify(on_progress, JobProgress(state=JobState.RESOLVING_OUTPUT, message="動画を取得しています..."))
 
-        # VRAM・RAM を同時計測しながら生成を監視
+        # VRAM・RAM を計測しながら生成を実行する。従来はwatch_progressループのみを
+        # 計測していたが、SCH-01 PR3の統合によりexecutor.run()全体
+        # (接続確認〜アップロード〜監視〜出力解決) を計測窓とする
+        # (計測窓がアップロード/出力解決分だけ広がるのは計画上の既知差分として許容する)。
         async with VramMonitor() as vram, RamMonitor(total_gb=self._ram_total_gb) as ram:
             tracker = ProgressTracker(
                 on_progress=on_progress,
                 node_labels=build_node_labels(self._template),
                 stage_count=count_progress_stages(self._template),
             )
-            async for event in client.watch_progress(prompt_id):
-                tracker.handle_event(event)
+            try:
+                result = await self._executor.run(
+                    req, client,
+                    on_stage=_on_stage,
+                    on_event=tracker.handle_event,
+                    cancel_check=lambda: job.status == JobState.CANCELLED,
+                )
+            except OutputNotFoundError as e:
+                # 既存挙動を維持: 失敗時もhistory.jsonを保存してからraiseする
+                _save_history(getattr(e, "history", {}))
+                raise
 
-        if job.status == JobState.CANCELLED:
-            raise MakeAiFactoryError("生成がキャンセルされました")
+        job.uploaded_image_name = result.uploaded_image_name
+        job.prompt_id = result.prompt_id
+        _save_history(result.history)
 
-        # history 取得
-        job.status = JobState.RESOLVING_OUTPUT
-        _notify(on_progress, JobProgress(state=JobState.RESOLVING_OUTPUT, message="動画を取得しています..."))
-
-        # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
-        # (成功しているのに失敗扱いにしないための安全弁。history取得自体は毎回やり直す)
-        def _save_history(h: dict) -> None:
-            with (job_dir / "history.json").open("w", encoding="utf-8") as f:
-                json.dump(h, f, ensure_ascii=False, indent=2)
-
-        try:
-            output_mp4, history = await resolve_output_with_retry(
-                client, prompt_id, self._paths.comfyui_output_dir, job.job_id,
-            )
-        except OutputNotFoundError as e:
-            # 既存挙動を維持: 失敗時もhistory.jsonを保存してからraiseする
-            _save_history(getattr(e, "history", {}))
-            raise
-        _save_history(history)
-
-        final_output = job_dir / "output.mp4"
-        shutil.copy2(output_mp4, final_output)
+        final_output = result.output_path
         job.output_path = str(final_output)
         job.status = JobState.COMPLETED
 

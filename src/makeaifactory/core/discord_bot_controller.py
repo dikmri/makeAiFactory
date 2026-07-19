@@ -18,13 +18,13 @@ from PySide6.QtCore import QObject, Signal
 
 from ..comfy.api_client import ComfyApiClient
 from ..comfy.progress_tracker import StageProgressEstimator, count_progress_stages
-from ..comfy.workflow_patcher import WorkflowPatchContext, make_output_prefix, patch_workflow
 from ..constants import COMFY_HOST, MODEL_PRESETS
 from ..core.bot_state import read_bot_state
-from ..core.generation_executor import load_template_for_workflow, resolve_output_with_retry
+from ..core.generation_executor import GenerationExecutor, GenerationRequest, load_template_for_workflow
 from ..core.generation_gate import GenerationGate
 from ..core.paths import AppPaths
 from ..core.settings_store import SettingsStore
+from ..domain.errors import JobCancelledError
 from ..i18n import tr
 from ..remote_room.rate_limiter import RateLimiter
 from ..remote_room.upload_validator import validate_upload
@@ -138,6 +138,8 @@ class DiscordBotController:
         # (スタンドアロン discord_bot.py はこのクラスを使わず bot_state.json を
         # 直接読むだけなので、この分岐の有無に影響されない)。
         self._gate = gate if gate is not None else GenerationGate(None)
+        # SCH-01 PR3: 3経路共通の生成実行本体。生成フロー自体はここに委譲する。
+        self._executor = GenerationExecutor(paths)
         self._signals = DiscordBotSignals()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -524,6 +526,11 @@ class DiscordBotController:
 
     # ── ComfyUI 動画生成 ───────────────────────────────────────────────────
 
+    def _make_client(self, comfy_port: int) -> ComfyApiClient:
+        """ComfyApiClient を生成する。テストでの差し替え用に切り出したフック。"""
+        base_url = f"http://{COMFY_HOST}:{comfy_port}"
+        return ComfyApiClient(base_url)
+
     async def _generate_video(
         self, image_path: Path, comfy_port: int, on_started=None, workflow: str | None = None,
     ) -> Path:
@@ -540,57 +547,57 @@ class DiscordBotController:
         job_dir = self._paths.job_dir(job_id, date_str)
         job_dir.mkdir(parents=True, exist_ok=True)
 
+        # アーカイブ用の入力画像コピー (ComfyUIへのアップロード用コピーは
+        # GenerationExecutorが別名 (discord_<job_id><suffix>) で行う)
         input_copy = job_dir / ("input" + image_path.suffix)
         shutil.copy2(image_path, input_copy)
 
-        base_url = f"http://{COMFY_HOST}:{comfy_port}"
-        client = ComfyApiClient(base_url)
+        client = self._make_client(comfy_port)
         self._current_comfy_client = client
 
+        seed = random.randint(0, 2**32 - 1)
+        req = GenerationRequest(
+            owner="discord",
+            job_id=job_id,
+            input_image=image_path,
+            job_dir=job_dir,
+            template=template,
+            seed=seed,
+            unet_high_name=preset_def["unet_high"],
+            unet_low_name=preset_def["unet_low"],
+            sage_attention_mode="disabled",
+            upload_basename=f"discord_{job_id}{image_path.suffix}",
+            ready_timeout_sec=30,
+        )
+
+        stage_estimator = StageProgressEstimator(count_progress_stages(template))
+
+        def _on_stage(stage: str) -> None:
+            # 既存実装はqueue投入後・監視開始直前に0%「生成中...」を1回emitするのみ
+            if stage == "generating":
+                self._signals.job_progress.emit(0.0, tr("生成中..."))
+
+        def _on_event(event) -> None:
+            if on_started is not None and event.event_type == "execution_start":
+                on_started()
+            if event.event_type == "progress" and event.max_steps > 0:
+                pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
+                self._signals.job_progress.emit(pct, tr("生成中... {pct}%").format(pct=int(pct)))
+
         try:
-            logger.info("ComfyUI 接続確認: %s", base_url)
-            await client.wait_until_ready(timeout_sec=30)
+            logger.info("ComfyUI 接続確認: port=%d", comfy_port)
+            try:
+                result = await self._executor.run(
+                    req, client,
+                    on_stage=_on_stage,
+                    on_event=_on_event,
+                    cancel_check=self._cancel_requested.is_set,
+                )
+            except JobCancelledError as e:
+                # 既存挙動を維持: Discord経路のキャンセルは_CancelledErrorで表現する
+                raise _CancelledError() from e
 
-            upload_name_src = job_dir / (f"discord_{job_id}{image_path.suffix}")
-            shutil.copy2(image_path, upload_name_src)
-            uploaded_name = await client.upload_image(upload_name_src)
-            logger.info("画像アップロード: %s", uploaded_name)
-
-            seed = random.randint(0, 2**32 - 1)
-            ctx = WorkflowPatchContext(
-                job_id=job_id,
-                uploaded_image_name=uploaded_name,
-                output_prefix=make_output_prefix(job_id),
-                seed=seed,
-                unet_high_name=preset_def["unet_high"],
-                unet_low_name=preset_def["unet_low"],
-                sage_attention_mode="disabled",
-            )
-            patched = patch_workflow(template, ctx)
-
-            prompt_id = await client.queue_prompt(patched)
-            logger.info("生成開始: job=%s prompt=%s", job_id, prompt_id)
-
-            self._signals.job_progress.emit(0.0, tr("生成中..."))
-            stage_estimator = StageProgressEstimator(count_progress_stages(template))
-            async for event in client.watch_progress(prompt_id):
-                if on_started is not None and event.event_type == "execution_start":
-                    on_started()
-                if event.event_type == "progress" and event.max_steps > 0:
-                    pct = stage_estimator.update(event.node_id, event.step, event.max_steps)
-                    self._signals.job_progress.emit(pct, tr("生成中... {pct}%").format(pct=int(pct)))
-
-            if self._cancel_requested.is_set():
-                raise _CancelledError()
-
-            # prompt_idに紐づく動画がhistoryへ未反映な稀な競合に備え、最大3回リトライする
-            output_mp4, _history = await resolve_output_with_retry(
-                client, prompt_id, self._paths.comfyui_output_dir, job_id,
-            )
-
-            final_output = job_dir / "output.mp4"
-            shutil.copy2(output_mp4, final_output)
-            logger.info("生成完了: %s → %s", job_id, final_output)
-            return final_output
+            logger.info("生成完了: %s → %s", job_id, result.output_path)
+            return result.output_path
         finally:
             self._current_comfy_client = None
